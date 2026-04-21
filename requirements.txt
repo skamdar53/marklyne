@@ -1,5 +1,5 @@
-streamlit
-pandas
-plotly
-nba_api
-requests
+streamlit==1.55.0
+pandas==2.3.3
+plotly==6.6.0
+nba_api==1.11.4
+requests==2.32.5
