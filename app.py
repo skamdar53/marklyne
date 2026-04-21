@@ -197,13 +197,20 @@ with st.sidebar.expander("How it works"):
     """)
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Modes:**")
-st.sidebar.markdown("- **Today's Picks** — pulls live PrizePicks lines automatically")
-st.sidebar.markdown("- **Manual Slate** — enter your own players and props")
-st.sidebar.markdown("- **Backtest** — test the algorithm against historical games")
+st.sidebar.markdown("- **Today's Picks** — pulls live PrizePicks lines automatically *(works locally)*")
+st.sidebar.markdown("- **📋 Manual Slate** — enter any player + line and get a full score instantly")
+st.sidebar.markdown("- **Backtest** — test the algorithm against 3 seasons of historical games")
 
 # ── Today's Picks ─────────────────────────────────────────────────────────────
 if mode == "Today's Picks (Live)":
     st.title("🏀 Today's NBA Picks")
+
+    st.info(
+        "**Heads up:** The live PrizePicks pull works when running locally, but may be unavailable "
+        "on the hosted version (PrizePicks blocks cloud server IPs). If the pull fails, switch to "
+        "**Manual Slate** — enter any player, opponent, prop, and line to get a full confidence score instantly.",
+        icon="ℹ️",
+    )
 
     missing_raw = st.text_area(
         "Missing Teammates (optional)",
