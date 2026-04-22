@@ -38,7 +38,7 @@ Pulls all current NBA props from PrizePicks, matches to today's NBA schedule (in
 Enter any player, opponent, prop, and line manually. Useful for testing specific matchups or when PrizePicks hasn't posted lines yet.
 
 ### Backtest
-Test the algorithm's historical accuracy for a specific player/prop combination. Pulls 3 seasons of game logs, simulates what the algorithm would have predicted before each game, compares to actual results, and tracks fake bankroll performance with realistic PrizePicks payout multipliers.
+Test the algorithm's historical accuracy for a specific player/prop combination. Pulls 3 seasons of game logs and, for each historical game vs the chosen opponent, seeds the algorithm with only the data that was available at that point in time (last 10 games before tip-off). Compares predicted confidence to actual results and tracks fake bankroll performance with realistic PrizePicks payout multipliers. Every game in the sample is shown — confidence drives bet sizing, not whether a bet is placed.
 
 ## Tech Stack
 - **Python** — core algorithm
@@ -55,7 +55,7 @@ streamlit run app.py
 ```
 
 ## Limitations
-- PrizePicks integration uses their unofficial API — lines are typically available by 10am ET on game days
+- PrizePicks live pull works locally but is blocked on the hosted version (cloud datacenter IPs are blocked by their API) — use Manual Slate on the deployed app
 - nba_api has rate limits; first load takes 1–3 minutes as player data is fetched and cached
 - Line movement factor is currently neutral (0.5) — sharp money data would improve accuracy
 - Position-level defensive data sometimes falls back to team-level stats when nba_api endpoint is unavailable

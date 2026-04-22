@@ -4,7 +4,7 @@
 
 import pandas as pd
 from nba_api.stats.endpoints import playergamelog
-from data.players import get_player_id, get_streak_stats
+from data.players import get_player_id, get_streak_stats, seed_game_log_cache
 from data.matchups import get_team_id, get_team_abbr
 from algorithm.scoring import calculate_confidence
 from backtest.bankroll import Bankroll
@@ -101,28 +101,43 @@ def backtest_player(
         return None
 
     bankroll = Bankroll(starting_balance=starting_bankroll)
+    debug_lines = []
+    debug_lines.append(f"Found **{len(opp_logs)}** games vs {opponent_team} across 3 seasons.")
 
     for idx, game_row in opp_logs.iterrows():
+        game_date = game_row.get("GAME_DATE", "?")
+
         # Only use data from BEFORE this game
         logs_before = all_logs[all_logs.index < idx].tail(10)
         if len(logs_before) < 3:
+            debug_lines.append(f"- {game_date}: skipped — not enough prior games ({len(logs_before)})")
             continue
 
         # Infer what the line would have been
         line = _infer_line(logs_before, prop_type)
         if not line:
+            debug_lines.append(f"- {game_date}: skipped — could not infer line")
             continue
 
+        # Seed the cache with historical data available before this game
+        # so scoring functions use the player's form at that point in time
+        seed_game_log_cache(player_id, logs_before)
+
         # Run our algorithm
-        result = calculate_confidence(
-            player_name=player_name,
-            opponent_team=opponent_team,
-            prop_type=prop_type,
-            line=line,
-            position=position,
-        )
+        try:
+            result = calculate_confidence(
+                player_name=player_name,
+                opponent_team=opponent_team,
+                prop_type=prop_type,
+                line=line,
+                position=position,
+            )
+        except Exception as e:
+            debug_lines.append(f"- {game_date}: skipped — scoring error: {e}")
+            continue
 
         if "error" in result:
+            debug_lines.append(f"- {game_date}: skipped — {result['error']}")
             continue
 
         confidence = result["confidence"]
@@ -130,17 +145,25 @@ def backtest_player(
         hit        = actual > line if actual is not None else None
 
         if hit is None:
+            debug_lines.append(f"- {game_date}: skipped — no actual stat")
             continue
 
-        # Place bet and record result
+        bucket = "easy" if confidence >= 0.62 else "moderate" if confidence >= 0.56 else "aggressive" if confidence >= 0.50 else "skip"
+        debug_lines.append(
+            f"- {game_date}: line={line}, actual={actual}, conf={confidence*100:.1f}% [{bucket}], hit={hit}"
+        )
+
+        # Place bet and record result (force=True shows all games, not just high-confidence)
         bankroll.place_bet(
             confidence=confidence,
             hit=hit,
             label=f"{player_name} {prop_type} {line} vs {opponent_team} "
                   f"(actual: {actual})",
             reasons=result.get("reasons", []),
+            force=True,
         )
 
+    bankroll.debug_log = "\n".join(debug_lines)
     return bankroll
 
 

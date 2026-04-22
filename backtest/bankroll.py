@@ -39,7 +39,7 @@ class Bankroll:
             return "aggressive"
         return "skip"
 
-    def place_bet(self, confidence, hit, label="", reasons=None):
+    def place_bet(self, confidence, hit, label="", reasons=None, force=False):
         """
         Places a single bet based on confidence level.
         Uses percentage-of-bankroll sizing.
@@ -47,11 +47,15 @@ class Bankroll:
         confidence: float 0.0–1.0
         hit: bool — did the player go over the line?
         label: description for logging
+        force: if True, bet even on skip-tier picks (used in backtesting)
         """
         bucket = self._get_bucket(confidence)
         if bucket == "skip":
-            self.skipped += 1
-            return
+            if not force:
+                self.skipped += 1
+                return
+            # In forced mode, use minimum sizing for low-confidence picks
+            bucket = "aggressive"
 
         bet_pct  = BET_SIZE[bucket]
         bet_size = round(self.balance * bet_pct, 2)

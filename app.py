@@ -120,7 +120,11 @@ def _display_backtest(bankroll):
     m4.metric("Bets Placed",    bankroll.wins + bankroll.losses)
 
     if not bankroll.history:
-        st.warning("No bets placed — try a player with more games vs this opponent.")
+        st.warning("No bets placed — see debug log below for why each game was skipped.")
+        debug = getattr(bankroll, "debug_log", None)
+        if debug:
+            with st.expander("Debug log"):
+                st.markdown(debug)
         return
 
     balances = [bankroll.start] + [b["balance"] for b in bankroll.history]

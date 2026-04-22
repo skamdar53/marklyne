@@ -34,6 +34,12 @@ def get_player_id(name):
 
 _game_log_cache = {}
 
+
+def seed_game_log_cache(player_id, logs):
+    """Override the cache with provided logs (used in backtesting to inject historical data)."""
+    _game_log_cache[player_id] = logs
+
+
 def get_game_logs(player_id, n_games=N_GAMES):
     """Returns a DataFrame of the player's full season game logs. Cached per session."""
     if player_id not in _game_log_cache:
