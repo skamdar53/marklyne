@@ -11,6 +11,17 @@ import streamlit as st
 PRIZEPICKS_API = "https://api.prizepicks.com"
 
 
+class PrizePicksBlockedError(Exception):
+    """
+    Raised when the request to PrizePicks itself fails (DataDome challenge,
+    403/429, network error) — distinct from a request that succeeds but
+    legitimately returns no lines for a league. Callers use this to tell
+    "PrizePicks is blocking us right now" apart from "no games today" in
+    the UI, since those need very different messages.
+    """
+    pass
+
+
 @st.cache_data(ttl=3600)
 def get_leagues():
     """
@@ -58,7 +69,7 @@ def get_prizepicks_lines(league_id, prop_map, valid_prop_types):
         data = r.json()
     except Exception as e:
         print(f"PrizePicks fetch error (league {league_id}): {e}")
-        return []
+        raise PrizePicksBlockedError(str(e)) from e
 
     players_map = {}
     for item in data.get("included", []):

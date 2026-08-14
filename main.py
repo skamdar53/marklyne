@@ -1,4 +1,4 @@
-# main.py — run Arbiter's picks/backtest engine from the CLI
+# main.py — run Marklyne's picks/backtest engine from the CLI
 #
 # Usage:
 #   python3 main.py live      --sport nba   — auto-pull today's PrizePicks slate and generate picks
@@ -72,7 +72,7 @@ def run_backtest(sport_key):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Arbiter — multi-sport player-prop scoring engine")
+    parser = argparse.ArgumentParser(description="Marklyne — multi-sport player-prop scoring engine")
     parser.add_argument("mode", choices=["live", "manual", "backtest"], nargs="?", default="manual")
     parser.add_argument("--sport", choices=list(SPORTS.keys()), default="nba")
     args = parser.parse_args()

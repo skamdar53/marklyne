@@ -1,4 +1,4 @@
-# Arbiter
+# Marklyne
 
 A multi-sport player-prop scoring engine that cross-references live PrizePicks lines
 against real-time Kalshi and Polymarket prediction markets, and backtests every model
@@ -30,7 +30,7 @@ Each prop lands in a confidence bucket:
 ## Cross-market signal (Kalshi + Polymarket)
 
 Kalshi and Polymarket both run live sports prediction markets with public, unauthenticated
-read APIs. Arbiter pulls current prices and trading volume from both and uses them two ways:
+read APIs. Marklyne pulls current prices and trading volume from both and uses them two ways:
 
 1. **A scoring factor.** Where a prediction market prices the same outcome as a PrizePicks
    prop (Kalshi's `floor_strike` markets in particular map directly onto an over/under line —

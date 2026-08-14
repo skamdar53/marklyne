@@ -1,4 +1,4 @@
-# app.py — Streamlit dashboard for Arbiter
+# app.py — Streamlit dashboard for Marklyne
 # Run with: streamlit run app.py
 
 import sys
@@ -16,7 +16,7 @@ from core.picks import generate_picks, generate_parlays
 from sports.registry import SPORTS, get_sport
 
 st.set_page_config(
-    page_title="Arbiter",
+    page_title="Marklyne",
     page_icon="⚖️",
     layout="wide",
 )
@@ -204,7 +204,7 @@ def _display_market_discrepancies(sport_key):
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
-st.sidebar.title("⚖️ Arbiter")
+st.sidebar.title("⚖️ Marklyne")
 st.sidebar.markdown(
     "A multi-sport player-prop scoring engine that cross-references PrizePicks lines "
     "against real-time Kalshi and Polymarket prediction markets."
@@ -270,16 +270,28 @@ if mode == "Today's Picks (Live)":
                 player, teammate = line.split(":", 1)
                 missing[player.strip()] = teammate.strip()
 
-        with st.spinner(f"Fetching {sport.label} schedule and PrizePicks lines..."):
-            slate = sport.build_auto_slate(missing)
+        from markets.prizepicks import PrizePicksBlockedError
 
-        if not slate:
+        slate = None
+        try:
+            with st.spinner(f"Fetching {sport.label} schedule and PrizePicks lines..."):
+                slate = sport.build_auto_slate(missing)
+        except PrizePicksBlockedError as e:
+            st.error(
+                f"**PrizePicks blocked this request** ({e}). This is DataDome, PrizePicks' "
+                "anti-bot protection — it can trigger even locally if this IP has made a lot "
+                "of automated requests recently, not just from cloud/datacenter IPs. It usually "
+                "clears up after a while. Use **Manual Slate** in the meantime.",
+                icon="🚫",
+            )
+
+        if slate is not None and not slate:
             st.warning(
-                f"No props found for {sport.label} right now — either there are no games "
-                "scheduled, lines haven't posted yet, or the PrizePicks pull failed. "
+                f"No props found for {sport.label} right now — the PrizePicks pull succeeded, "
+                "but no games are scheduled or lines haven't posted yet for this sport. "
                 "Try the **Manual Slate** tab to score specific props manually."
             )
-        else:
+        elif slate:
             with st.spinner(f"Scoring {len(slate)} props..."):
                 picks   = generate_picks(sport, slate, missing)
                 parlays = generate_parlays(picks)
