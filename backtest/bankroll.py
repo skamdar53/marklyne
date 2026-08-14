@@ -1,19 +1,9 @@
 # backtest/bankroll.py — fake money tracker with bet sizing strategies
 
-from config import EASY_THRESHOLD, MODERATE_THRESHOLD, AGGRESSIVE_THRESHOLD
-
-# PrizePicks payout multipliers (after the house cut)
-# Single pick pays ~0.91x (like -110 in traditional betting)
-# Parlays pay fixed multipliers
-SINGLE_PAYOUT  = 0.91
-PARLAY_PAYOUTS = {2: 3.0, 3: 5.0, 4: 10.0, 5: 20.0, 6: 25.0}
-
-# Bet sizing as % of current bankroll per bucket
-BET_SIZE = {
-    "easy":       0.03,   # 3% of bankroll
-    "moderate":   0.02,   # 2% of bankroll
-    "aggressive": 0.01,   # 1% of bankroll
-}
+from core.config import (
+    EASY_THRESHOLD, MODERATE_THRESHOLD, AGGRESSIVE_THRESHOLD,
+    SINGLE_PAYOUT, PARLAY_PAYOUTS, BET_SIZE,
+)
 
 
 class Bankroll:

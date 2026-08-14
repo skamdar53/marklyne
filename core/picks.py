@@ -1,36 +1,41 @@
-# algorithm/picks.py — generate picks and parlay suggestions
+# core/picks.py — generate picks and parlay suggestions, sport-agnostic
 
-from algorithm.scoring import calculate_confidence
-from data.lines import get_prizepicks_lines
-from config import EASY_THRESHOLD, MODERATE_THRESHOLD, AGGRESSIVE_THRESHOLD
+from core.scoring import calculate_confidence, categorize_pick
 
 
-def categorize_pick(confidence):
-    """Buckets a confidence score into easy/moderate/aggressive/skip."""
-    if confidence >= EASY_THRESHOLD:
-        return "easy"
-    elif confidence >= MODERATE_THRESHOLD:
-        return "moderate"
-    elif confidence >= AGGRESSIVE_THRESHOLD:
-        return "aggressive"
-    else:
-        return "skip"
-
-
-def generate_picks(game_slate, missing_teammates=None):
+def _attach_market_signal(sport_module, entry):
     """
-    Generates confidence-scored picks for a list of games.
+    Best-effort enrichment: looks up a volume-weighted Kalshi/Polymarket signal
+    for this prop and attaches it as market_signal_score, which each sport's
+    "market_signal" factor reads (defaults to neutral 0.5 if unavailable).
+    Failures here should never block scoring — market data is a nice-to-have.
+    """
+    if "market_signal_score" in entry:
+        return entry
+    try:
+        from markets.discrepancy import get_market_signal_score
+        entry = dict(entry)
+        entry["market_signal_score"] = get_market_signal_score(
+            sport_module.key,
+            entry.get("player_name"),
+            entry.get("team"),
+            entry.get("opponent"),
+            entry.get("prop_type"),
+            entry.get("line"),
+        )
+    except Exception:
+        pass
+    return entry
 
-    game_slate: list of dicts with keys:
-        - player_name
-        - opponent
-        - prop_type
-        - line
-        - is_home
-        - is_b2b
-        - position
 
+def generate_picks(sport_module, game_slate, missing_teammates=None):
+    """
+    Generates confidence-scored picks for a slate of props in a single sport.
+
+    sport_module: a SportModule instance
+    game_slate: list of dicts (see that sport's build_context() for required keys)
     missing_teammates: dict mapping player_name -> teammate_name who is out
+                        (only meaningful for sports whose factor set uses it)
 
     Returns a sorted list of pick dicts with confidence and bucket.
     """
@@ -38,27 +43,21 @@ def generate_picks(game_slate, missing_teammates=None):
         missing_teammates = {}
 
     picks = []
-    for game in game_slate:
-        player  = game["player_name"]
-        missing = missing_teammates.get(player)
+    for entry in game_slate:
+        player = entry.get("player_name")
+        entry = dict(entry)
+        entry.setdefault("missing_teammate", missing_teammates.get(player))
+        entry = _attach_market_signal(sport_module, entry)
 
-        result = calculate_confidence(
-            player_name=player,
-            opponent_team=game["opponent"],
-            prop_type=game["prop_type"],
-            line=game["line"],
-            is_home=game.get("is_home", True),
-            is_b2b=game.get("is_b2b", False),
-            missing_teammate=missing,
-            position=game.get("position", "SF"),
-        )
+        result = calculate_confidence(sport_module, entry)
 
         if "error" in result:
             print(f"  Skipping {player}: {result['error']}")
             continue
 
         result["bucket"] = categorize_pick(result["confidence"])
-        result["team"]   = game.get("team", "")
+        result["team"]   = entry.get("team", "")
+        result["sport"]  = sport_module.key
         picks.append(result)
 
     return sorted(picks, key=lambda x: x["confidence"], reverse=True)
@@ -83,7 +82,7 @@ def generate_parlays(picks):
       - Standard (3-leg):   top 3 Easy + Moderate picks
       - Aggressive (4-leg): top 4 picks from any non-skip bucket
 
-    Returns list of parlay dicts.
+    Works across sports transparently since it only reads confidence/bucket.
     """
     easy      = [p for p in picks if p["bucket"] == "easy"]
     em        = [p for p in picks if p["bucket"] in ("easy", "moderate")]
@@ -104,7 +103,7 @@ def generate_parlays(picks):
 
 
 def display_picks(picks):
-    """Pretty prints picks grouped by bucket."""
+    """Pretty prints picks grouped by bucket (CLI use)."""
     buckets = {"easy": [], "moderate": [], "aggressive": [], "skip": []}
     for p in picks:
         buckets[p["bucket"]].append(p)
@@ -125,7 +124,7 @@ def display_picks(picks):
 
 
 def display_parlays(parlays):
-    """Pretty prints parlay suggestions."""
+    """Pretty prints parlay suggestions (CLI use)."""
     if not parlays:
         print("\nNo parlay suggestions.")
         return

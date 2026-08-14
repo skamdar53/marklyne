@@ -1,40 +1,44 @@
-# app.py — Streamlit dashboard for the NBA betting algorithm
+# app.py — Streamlit dashboard for Arbiter
 # Run with: streamlit run app.py
+
+import sys
+import os
 
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
-import sys
-import os
-from config import EASY_THRESHOLD, MODERATE_THRESHOLD
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+from core.config import EASY_THRESHOLD, MODERATE_THRESHOLD
+from core.picks import generate_picks, generate_parlays
+from sports.registry import SPORTS, get_sport
+
 st.set_page_config(
-    page_title="NBA Picks",
-    page_icon="🏀",
+    page_title="Arbiter",
+    page_icon="⚖️",
     layout="wide",
 )
 
 
 # ── Shared Display Functions ──────────────────────────────────────────────────
-def _display_picks(picks, parlays):
+def _display_picks(sport, picks, parlays):
     """Renders picks and parlays in the dashboard."""
     if not picks:
         st.warning("No picks generated.")
         return
 
-    # ── Filters ───────────────────────────────────────────────────────────────
     all_teams = sorted({p.get("team", "") for p in picks if p.get("team")})
     all_games = sorted({f"{p.get('team', '?')} vs {p['opponent']}" for p in picks if p.get("team")})
+    prop_options = ["All"] + sport.prop_types
 
     fkey = st.session_state.get("filter_reset", 0)
     f1, f2, f3, f4, f5 = st.columns([2, 2, 2, 2, 1])
     filter_team   = f1.selectbox("Filter by Team",   ["All"] + all_teams,  key=f"ft_{fkey}")
     filter_game   = f2.selectbox("Filter by Game",   ["All"] + all_games,  key=f"fg_{fkey}")
     filter_bucket = f3.selectbox("Filter by Bucket", ["All", "Easy", "Moderate", "Aggressive"], key=f"fb_{fkey}")
-    filter_prop   = f4.selectbox("Filter by Prop",   ["All", "points", "rebounds", "assists", "pts+reb+ast", "three_pointers_made"], key=f"fp_{fkey}")
+    filter_prop   = f4.selectbox("Filter by Prop",   prop_options, key=f"fp_{fkey}")
     if f5.button("Reset", key=f"fr_{fkey}"):
         st.session_state["filter_reset"] = fkey + 1
         st.rerun()
@@ -59,7 +63,6 @@ def _display_picks(picks, parlays):
     m4.metric("🔴 Aggressive", len(aggressive))
     m5.metric("⚪ Skip",        len(skipped))
 
-    # ── Parlays first ─────────────────────────────────────────────────────────
     if parlays:
         st.markdown("---")
         st.subheader("💰 Parlay Suggestions")
@@ -71,7 +74,6 @@ def _display_picks(picks, parlays):
             for leg in parlay["legs"]:
                 col.markdown(f"• {leg['player']} — {leg['prop']} {leg['line']} ({leg['confidence']*100:.1f}%)")
 
-    # ── Picks by bucket ────────────────────────────────────────────────────────
     st.markdown("---")
     sentiment_icon = {"positive": "🟢", "negative": "🔴", "neutral": "🟡"}
 
@@ -91,7 +93,6 @@ def _display_picks(picks, parlays):
                 else:
                     st.write("No reasoning available.")
 
-    # ── Confidence chart ───────────────────────────────────────────────────────
     st.markdown("---")
     st.subheader("Confidence Breakdown")
     rows = [{"Player": p["player"], "Prop": p["prop"],
@@ -102,7 +103,7 @@ def _display_picks(picks, parlays):
         df, x="Player", y="Confidence", color="Bucket",
         color_discrete_map={"EASY": "green", "MODERATE": "gold", "AGGRESSIVE": "red"},
         labels={"Confidence": "Confidence (%)"},
-        title="Pick Confidence by Player",
+        title=f"{sport.label} Pick Confidence by Player",
         hover_data=["Prop"],
     )
     fig.add_hline(y=EASY_THRESHOLD*100,     line_dash="dash", line_color="green",  annotation_text=f"Easy ({EASY_THRESHOLD*100:.0f}%)")
@@ -167,52 +168,92 @@ def _display_backtest(bankroll):
                 st.write("No reasoning available.")
 
 
+def _display_market_discrepancies(sport_key):
+    """Renders cross-market (Kalshi vs Polymarket) discrepancy tab."""
+    from markets.discrepancy import get_platform_discrepancies
+
+    st.markdown(
+        "Compares implied win probability for the same games priced independently on **Kalshi** "
+        "and **Polymarket**. A large gap means the two markets disagree — which may or may not line "
+        "up with how PrizePicks has priced player props for the same game. This view is informational; "
+        "it doesn't feed into the confidence scores above (that happens via the `market_signal` factor, "
+        "weighted by trading volume, folded directly into each prop's score)."
+    )
+
+    with st.spinner("Pulling live Kalshi and Polymarket data..."):
+        try:
+            rows = get_platform_discrepancies(sport_key)
+        except Exception as e:
+            st.error(f"Could not pull prediction market data: {e}")
+            return
+
+    if not rows:
+        st.info("No overlapping markets found on both platforms for this sport right now.")
+        return
+
+    df = pd.DataFrame(rows)
+    df["kalshi_prob"]     = (df["kalshi_prob"] * 100).round(1)
+    df["polymarket_prob"] = (df["polymarket_prob"] * 100).round(1)
+    df["gap"]             = (df["gap"] * 100).round(1)
+    df = df.rename(columns={
+        "game": "Game", "outcome_label": "Outcome",
+        "kalshi_prob": "Kalshi %", "polymarket_prob": "Polymarket %", "gap": "Gap (pts)",
+        "kalshi_volume": "Kalshi Volume", "polymarket_volume": "Polymarket Volume",
+    })
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
-st.sidebar.title("🏀 NBA Picks Algorithm")
+st.sidebar.title("⚖️ Arbiter")
 st.sidebar.markdown(
-    "An algorithm that scores NBA player props using 7 data factors and recommends "
-    "the best bets and parlays for the day."
+    "A multi-sport player-prop scoring engine that cross-references PrizePicks lines "
+    "against real-time Kalshi and Polymarket prediction markets."
 )
 st.sidebar.markdown("---")
-mode = st.sidebar.radio("Mode", ["Today's Picks (Live)", "Manual Slate", "Backtest"])
+
+sport_key = st.sidebar.selectbox(
+    "Sport",
+    list(SPORTS.keys()),
+    format_func=lambda k: f"{SPORTS[k].icon} {SPORTS[k].label}",
+)
+sport = get_sport(sport_key)
+
+mode = st.sidebar.radio("Mode", ["Today's Picks (Live)", "Manual Slate", "Backtest", "Prediction Markets"])
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Bet Sizing**")
 starting_bankroll = st.sidebar.number_input("Starting Bankroll ($)", value=1000, step=100)
 st.sidebar.markdown("---")
 with st.sidebar.expander("How it works"):
-    st.markdown("""
-**7 scoring factors (0–100% each):**
+    weight_rows = "\n".join(f"| {k.replace('_', ' ').title()} | {v*100:.0f}% |" for k, v in sport.weights.items())
+    st.markdown(f"""
+**{sport.label} scoring factors (0-100% each):**
 
 | Factor | Weight |
 |--------|--------|
-| Recent streak vs line | 25% |
-| Historical matchup vs team | 20% |
-| Opponent defense + pace + zone | 20% |
-| Home / Away split | 10% |
-| Rest / Back-to-back | 10% |
-| Teammate availability | 10% |
-| Line movement | 5% |
+{weight_rows}
 
 **Confidence buckets:**
 - 🟢 **Easy** — 62%+ (safest)
-- 🟡 **Moderate** — 56–62%
-- 🔴 **Aggressive** — 50–56%
+- 🟡 **Moderate** — 56-62%
+- 🔴 **Aggressive** — 50-56%
 - ⚪ **Skip** — below 50%
     """)
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Modes:**")
 st.sidebar.markdown("- **Today's Picks** — pulls live PrizePicks lines automatically *(works locally)*")
 st.sidebar.markdown("- **📋 Manual Slate** — enter any player + line and get a full score instantly")
-st.sidebar.markdown("- **Backtest** — test the algorithm against 3 seasons of historical games")
+st.sidebar.markdown("- **Backtest** — test the algorithm against historical games")
+st.sidebar.markdown("- **Prediction Markets** — Kalshi vs Polymarket implied-probability discrepancies")
 
 # ── Today's Picks ─────────────────────────────────────────────────────────────
 if mode == "Today's Picks (Live)":
-    st.title("🏀 Today's NBA Picks")
+    st.title(f"{sport.icon} Today's {sport.label} Picks")
 
     st.info(
         "**Heads up:** The live PrizePicks pull works when running locally, but may be unavailable "
-        "on the hosted version (PrizePicks blocks cloud server IPs). If the pull fails, switch to "
-        "**Manual Slate** — enter any player, opponent, prop, and line to get a full confidence score instantly.",
+        "on a hosted deployment (PrizePicks blocks cloud server IPs via DataDome). If the pull fails, "
+        "switch to **Manual Slate** — enter any player, opponent, prop, and line to get a full "
+        "confidence score instantly.",
         icon="ℹ️",
     )
 
@@ -229,59 +270,63 @@ if mode == "Today's Picks (Live)":
                 player, teammate = line.split(":", 1)
                 missing[player.strip()] = teammate.strip()
 
-        with st.spinner("Fetching schedule and PrizePicks lines..."):
-            from data.schedule import build_auto_slate
-            from data.lines import get_prizepicks_lines
-            raw_lines = get_prizepicks_lines()
-            slate = build_auto_slate(missing, lines=raw_lines)
+        with st.spinner(f"Fetching {sport.label} schedule and PrizePicks lines..."):
+            slate = sport.build_auto_slate(missing)
 
-        if not raw_lines:
-            st.error(
-                "Could not fetch PrizePicks lines. Their API may be temporarily unavailable "
-                "or lines haven't been posted yet (usually up by 10am ET on game days). "
+        if not slate:
+            st.warning(
+                f"No props found for {sport.label} right now — either there are no games "
+                "scheduled, lines haven't posted yet, or the PrizePicks pull failed. "
                 "Try the **Manual Slate** tab to score specific props manually."
             )
-        elif not slate:
-            st.warning("No props found for today — there may be no NBA games scheduled.")
         else:
             with st.spinner(f"Scoring {len(slate)} props..."):
-                from algorithm.picks import generate_picks, generate_parlays
-                picks   = generate_picks(slate, missing)
+                picks   = generate_picks(sport, slate, missing)
                 parlays = generate_parlays(picks)
             st.session_state["live_picks"]   = picks
             st.session_state["live_parlays"] = parlays
 
     if st.session_state.get("live_picks"):
-        _display_picks(st.session_state["live_picks"], st.session_state.get("live_parlays", []))
+        _display_picks(sport, st.session_state["live_picks"], st.session_state.get("live_parlays", []))
 
 # ── Manual Slate ──────────────────────────────────────────────────────────────
 elif mode == "Manual Slate":
     st.title("📋 Manual Slate")
-    st.markdown("Add your own props below.")
+    st.markdown(f"Add your own {sport.label} props below.")
 
-    PROP_OPTIONS = ["points", "rebounds", "assists", "pts+reb+ast", "three_pointers_made"]
-    POS_OPTIONS  = ["PG", "SG", "SF", "PF", "C"]
+    pos_options = sport.position_options or [""]
+    n_cols = 7 if sport.position_options else 6
 
     slate = []
     for i in range(st.session_state.get("num_rows", 3)):
-        c1, c2, c3, c4, c5, c6, c7 = st.columns([2, 2, 2, 1, 1, 1, 1])
+        widths = [2, 2, 2, 1, 1, 1, 1] if sport.position_options else [2, 2, 2, 1, 1, 1]
+        cols = st.columns(widths)
         if i == 0:
-            c1.markdown("**Player**");   c2.markdown("**Opponent**"); c3.markdown("**Prop**")
-            c4.markdown("**Line**");     c5.markdown("**Pos**");      c6.markdown("**Home?**"); c7.markdown("**B2B?**")
-        player   = c1.text_input("", key=f"player_{i}", placeholder="LeBron James", label_visibility="collapsed")
-        opponent = c2.text_input("", key=f"opp_{i}",    placeholder="Warriors",     label_visibility="collapsed")
-        prop     = c3.selectbox("",  PROP_OPTIONS, key=f"prop_{i}",                 label_visibility="collapsed")
-        line     = c4.number_input("", key=f"line_{i}", value=20.0, step=0.5,       label_visibility="collapsed")
-        position = c5.selectbox("",  POS_OPTIONS,  key=f"pos_{i}",                 label_visibility="collapsed")
-        is_home  = c6.checkbox("",   key=f"home_{i}",                               label_visibility="collapsed")
-        is_b2b   = c7.checkbox("",   key=f"b2b_{i}",                                label_visibility="collapsed")
+            headers = ["**Player**", "**Opponent**", "**Prop**", "**Line**"]
+            if sport.position_options:
+                headers.append("**Pos**")
+            headers += ["**Home?**", "**B2B?**"]
+            for c, h in zip(cols, headers):
+                c.markdown(h)
+
+        c_iter = iter(cols)
+        player   = next(c_iter).text_input("", key=f"player_{i}", placeholder="Player name", label_visibility="collapsed")
+        opponent = next(c_iter).text_input("", key=f"opp_{i}",    placeholder="Opponent",    label_visibility="collapsed")
+        prop     = next(c_iter).selectbox("",  sport.prop_types,  key=f"prop_{i}",            label_visibility="collapsed")
+        line     = next(c_iter).number_input("", key=f"line_{i}", value=20.0, step=0.5,       label_visibility="collapsed")
+        position = next(c_iter).selectbox("",  pos_options, key=f"pos_{i}", label_visibility="collapsed") if sport.position_options else None
+        is_home  = next(c_iter).checkbox("",   key=f"home_{i}",                               label_visibility="collapsed")
+        is_b2b   = next(c_iter).checkbox("",   key=f"b2b_{i}",                                label_visibility="collapsed")
 
         if player and opponent:
-            slate.append({
+            entry = {
                 "player_name": player, "opponent": opponent,
                 "prop_type": prop,     "line": line,
-                "is_home": is_home,    "is_b2b": is_b2b, "position": position,
-            })
+                "is_home": is_home,    "is_b2b": is_b2b,
+            }
+            if position:
+                entry["position"] = position
+            slate.append(entry)
 
     col_add, col_run = st.columns([1, 5])
     if col_add.button("+ Add Row"):
@@ -290,32 +335,30 @@ elif mode == "Manual Slate":
 
     if col_run.button("▶ Generate Picks", type="primary") and slate:
         with st.spinner("Scoring props..."):
-            from algorithm.picks import generate_picks, generate_parlays
-            picks   = generate_picks(slate)
+            picks   = generate_picks(sport, slate)
             parlays = generate_parlays(picks)
         st.session_state["manual_picks"]   = picks
         st.session_state["manual_parlays"] = parlays
 
     if st.session_state.get("manual_picks"):
-        _display_picks(st.session_state["manual_picks"], st.session_state.get("manual_parlays", []))
+        _display_picks(sport, st.session_state["manual_picks"], st.session_state.get("manual_parlays", []))
 
 # ── Backtest ──────────────────────────────────────────────────────────────────
 elif mode == "Backtest":
     st.title("📊 Backtest")
-    st.markdown("Test the algorithm against historical games.")
+    st.markdown(f"Test the {sport.label} algorithm against historical games.")
 
     col1, col2, col3 = st.columns(3)
-    player_name = col1.text_input("Player", value="LeBron James")
-    opponent    = col2.text_input("Opponent Team", value="Warriors")
-    prop_type   = col3.selectbox("Prop Type",
-                                 ["points", "rebounds", "assists",
-                                  "pts+reb+ast", "three_pointers_made"])
-    position    = st.selectbox("Position", ["PG", "SG", "SF", "PF", "C"], index=2)
+    player_name = col1.text_input("Player", value="")
+    opponent    = col2.text_input("Opponent Team", value="")
+    prop_type   = col3.selectbox("Prop Type", sport.prop_types)
+    position    = st.selectbox("Position", sport.position_options) if sport.position_options else None
 
-    if st.button("▶ Run Backtest", type="primary"):
+    if st.button("▶ Run Backtest", type="primary") and player_name and opponent:
         with st.spinner(f"Backtesting {player_name} vs {opponent}..."):
             from backtest.simulator import backtest_player
             bankroll = backtest_player(
+                sport,
                 player_name=player_name,
                 opponent_team=opponent,
                 prop_type=prop_type,
@@ -330,3 +373,9 @@ elif mode == "Backtest":
 
     if st.session_state.get("backtest_bankroll"):
         _display_backtest(st.session_state["backtest_bankroll"])
+
+# ── Prediction Markets ────────────────────────────────────────────────────────
+elif mode == "Prediction Markets":
+    st.title("🔀 Prediction Markets")
+    st.markdown(f"Kalshi vs Polymarket discrepancies for {sport.label}.")
+    _display_market_discrepancies(sport_key)
