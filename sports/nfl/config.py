@@ -16,8 +16,6 @@ BACKTEST_SEASONS = [2023, 2024, 2025]
 # workload trend against, and home/away and short-week splits need the volume.
 BACKTEST_WINDOW = 17
 
-PRIZEPICKS_LEAGUE_ID = 9
-
 PROP_TYPES = [
     "pass_yards",
     "pass_completions",
@@ -38,23 +36,25 @@ PROP_TYPE_LABELS = {
     "rec+rush_yards":   "Rush+Rec Yds",
 }
 
-# Maps PrizePicks' raw stat_type (lowercased, spaces -> underscores) to our
+# Maps the prop names Kalshi/Polymarket state their markets in to our
 # normalized prop type names.
 #
-# NOTE: PrizePicks' API is behind DataDome and returned 403 from this machine,
-# so these raw keys could not be confirmed against a live NFL board. They're the
-# lowercased/underscored forms of the board labels PrizePicks displays, plus the
-# plausible spelling variants for each. Unrecognized stat_types are silently
-# dropped by markets/prizepicks.py, so an unmapped variant costs us lines rather
-# than producing bad data — worth re-checking during the season and adding any
-# missing keys here.
-PRIZEPICKS_PROP_MAP = {
+# Unlike NBA/MLB/NHL — whose prop names happen to match the platforms' — this
+# module spells its props short ("pass_yards"), while Kalshi's NFL series are
+# named long ("passing_yards", confirmed live). markets/lines.py filters on the
+# names we hand it and returns rows tagged with the platform's spelling, so
+# build_auto_slate passes these keys in and maps the results back through here.
+# Extra spellings are mapped defensively; an unmapped variant costs us lines
+# rather than producing bad data.
+MARKET_PROP_MAP = {
     "pass_yards":              "pass_yards",
     "passing_yards":           "pass_yards",
     "pass_completions":        "pass_completions",
+    "passing_completions":     "pass_completions",
     "completions":             "pass_completions",
     "pass_tds":                "pass_tds",
     "passing_tds":             "pass_tds",
+    "passing_touchdowns":      "pass_tds",
     "pass_touchdowns":         "pass_tds",
     "rush_yards":              "rush_yards",
     "rushing_yards":           "rush_yards",

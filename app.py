@@ -22,6 +22,66 @@ st.set_page_config(
 )
 
 
+# ── Ticker bar ──────────────────────────────────────────────────────────────
+def _ticker_track_html(items, label, accent):
+    """One scrolling strip. Items are duplicated once so the CSS loop has no
+    visible seam; probability is colored green/red of the 50% line so the
+    strip reads at a glance the way a real stock ticker does."""
+    if not items:
+        spans = f'<span class="tick-item">no live {label.lower()} data right now</span>'
+    else:
+        parts = []
+        for it in items:
+            pct = it["implied_prob"] * 100
+            color = "#2ecc71" if pct >= 50 else "#ff5c5c"
+            parts.append(
+                f'<span class="tick-item">{it["label"]} '
+                f'<b style="color:{color}">{pct:.0f}%</b></span>'
+                f'<span class="tick-sep">·</span>'
+            )
+        spans = "".join(parts) * 2
+
+    return f"""
+    <div class="ticker-row">
+      <div class="ticker-label" style="background:{accent}">{label}</div>
+      <div class="ticker-track"><div class="ticker-scroll">{spans}</div></div>
+    </div>
+    """
+
+
+def _render_ticker(sport_keys):
+    from markets.discrepancy import get_ticker_items
+
+    try:
+        kalshi_items = get_ticker_items("kalshi", sport_keys)
+    except Exception:
+        kalshi_items = []
+    try:
+        poly_items = get_ticker_items("polymarket", sport_keys)
+    except Exception:
+        poly_items = []
+
+    st.markdown(
+        """
+        <style>
+        .ticker-row { display: flex; align-items: stretch; border-radius: 6px;
+                      overflow: hidden; margin-bottom: 6px; font-family: 'SF Mono', Consolas, monospace; }
+        .ticker-label { flex: 0 0 auto; padding: 6px 14px; color: #0b0b0b; font-weight: 700;
+                         font-size: 0.8rem; letter-spacing: 0.08em; display: flex; align-items: center; }
+        .ticker-track { flex: 1 1 auto; background: #111318; overflow: hidden; white-space: nowrap; }
+        .ticker-scroll { display: inline-block; padding: 6px 0; animation: ticker-scroll 55s linear infinite; }
+        .ticker-row:hover .ticker-scroll { animation-play-state: paused; }
+        .tick-item { color: #e8e8e8; font-size: 0.82rem; padding: 0 10px; }
+        .tick-sep { color: #4a4a4a; }
+        @keyframes ticker-scroll { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(_ticker_track_html(kalshi_items, "KALSHI", "#ffd23f"), unsafe_allow_html=True)
+    st.markdown(_ticker_track_html(poly_items, "POLYMARKET", "#5ac8fa"), unsafe_allow_html=True)
+
+
 # ── Shared Display Functions ──────────────────────────────────────────────────
 def _display_picks(sport, picks, parlays):
     """Renders picks and parlays in the dashboard."""
@@ -174,10 +234,10 @@ def _display_market_discrepancies(sport_key):
 
     st.markdown(
         "Compares implied win probability for the same games priced independently on **Kalshi** "
-        "and **Polymarket**. A large gap means the two markets disagree — which may or may not line "
-        "up with how PrizePicks has priced player props for the same game. This view is informational; "
-        "it doesn't feed into the confidence scores above (that happens via the `market_signal` factor, "
-        "weighted by trading volume, folded directly into each prop's score)."
+        "and **Polymarket**. A large gap means two real-money markets disagree on the same outcome. "
+        "This view is informational; it doesn't feed into the confidence scores above (that happens "
+        "via the `market_signal` factor, weighted by trading volume, folded directly into each prop's "
+        "score — and for Today's Picks, these two platforms *are* the line source, not just a signal)."
     )
 
     with st.spinner("Pulling live Kalshi and Polymarket data..."):
@@ -203,11 +263,64 @@ def _display_market_discrepancies(sport_key):
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
+def _display_ambiguous_markets(sport_key):
+    """Renders the toss-up / high-conviction-disagreement tab."""
+    from markets.discrepancy import get_ambiguous_markets, HIGH_VOLUME_FLOOR, TOSSUP_BAND
+
+    st.markdown(
+        f"Two cuts of the most **interesting** live markets, across game outcomes and player props "
+        f"on both platforms (volume floor: **{HIGH_VOLUME_FLOOR:,.0f}** contracts, so this is real "
+        f"conviction, not noise on a thin book):"
+    )
+
+    with st.spinner("Scanning live Kalshi and Polymarket markets..."):
+        try:
+            result = get_ambiguous_markets(sport_key)
+        except Exception as e:
+            st.error(f"Could not pull prediction market data: {e}")
+            return
+
+    st.subheader(f"🎲 Toss-ups — within {TOSSUP_BAND*100:.0f} pts of 50/50")
+    st.caption("Genuine outcome uncertainty that still has heavy money behind it.")
+    toss_ups = result.get("toss_ups", [])
+    if not toss_ups:
+        st.info("No high-volume toss-ups right now.")
+    else:
+        df = pd.DataFrame(toss_ups)
+        df["implied_prob"] = (df["implied_prob"] * 100).round(1)
+        df = df.rename(columns={
+            "source": "Platform", "market_kind": "Type", "label": "Market",
+            "game": "Game", "implied_prob": "Implied %", "volume": "Volume",
+        })
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.subheader("⚡ High-conviction disagreements")
+    st.caption("Both platforms are heavily traded on the same outcome, and still don't agree.")
+    disagreements = result.get("disagreements", [])
+    if not disagreements:
+        st.info("No high-volume cross-platform disagreements right now.")
+    else:
+        df = pd.DataFrame(disagreements)
+        df["kalshi_prob"]     = (df["kalshi_prob"] * 100).round(1)
+        df["polymarket_prob"] = (df["polymarket_prob"] * 100).round(1)
+        df["gap"]             = (df["gap"] * 100).round(1)
+        df = df.rename(columns={
+            "game": "Game", "outcome_label": "Outcome", "market_kind": "Type",
+            "kalshi_prob": "Kalshi %", "polymarket_prob": "Polymarket %", "gap": "Gap (pts)",
+            "kalshi_volume": "Kalshi Volume", "polymarket_volume": "Polymarket Volume",
+        })
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+# ── Ticker ────────────────────────────────────────────────────────────────────
+_render_ticker(list(SPORTS.keys()))
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 st.sidebar.title("⚖️ Marklyne")
 st.sidebar.markdown(
-    "A multi-sport player-prop scoring engine that cross-references PrizePicks lines "
-    "against real-time Kalshi and Polymarket prediction markets."
+    "A multi-sport player-prop scoring engine built directly on live Kalshi and "
+    "Polymarket prediction markets — no third-party prop book in the loop."
 )
 st.sidebar.markdown("---")
 
@@ -218,7 +331,10 @@ sport_key = st.sidebar.selectbox(
 )
 sport = get_sport(sport_key)
 
-mode = st.sidebar.radio("Mode", ["Today's Picks (Live)", "Manual Slate", "Backtest", "Prediction Markets"])
+mode = st.sidebar.radio(
+    "Mode",
+    ["Today's Picks (Live)", "Manual Slate", "Backtest", "Prediction Markets", "Ambiguous Markets"],
+)
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Bet Sizing**")
 starting_bankroll = st.sidebar.number_input("Starting Bankroll ($)", value=1000, step=100)
@@ -240,20 +356,21 @@ with st.sidebar.expander("How it works"):
     """)
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Modes:**")
-st.sidebar.markdown("- **Today's Picks** — pulls live PrizePicks lines automatically *(works locally)*")
+st.sidebar.markdown("- **Today's Picks** — live prop lines pulled directly from Kalshi/Polymarket")
 st.sidebar.markdown("- **📋 Manual Slate** — enter any player + line and get a full score instantly")
 st.sidebar.markdown("- **Backtest** — test the algorithm against historical games")
 st.sidebar.markdown("- **Prediction Markets** — Kalshi vs Polymarket implied-probability discrepancies")
+st.sidebar.markdown("- **Ambiguous Markets** — high-volume toss-ups and cross-platform disagreements")
 
 # ── Today's Picks ─────────────────────────────────────────────────────────────
 if mode == "Today's Picks (Live)":
     st.title(f"{sport.icon} Today's {sport.label} Picks")
 
     st.info(
-        "**Heads up:** The live PrizePicks pull works when running locally, but may be unavailable "
-        "on a hosted deployment (PrizePicks blocks cloud server IPs via DataDome). If the pull fails, "
-        "switch to **Manual Slate** — enter any player, opponent, prop, and line to get a full "
-        "confidence score instantly.",
+        "Lines are pulled directly from live Kalshi and Polymarket player-prop markets — "
+        "no third-party prop book, so no anti-bot blocking to fight. Coverage depends on what's "
+        "actively trading right now: deepest for in-season sports, thin or empty out of season. "
+        "If a sport comes back empty, try **Manual Slate** instead.",
         icon="ℹ️",
     )
 
@@ -270,28 +387,16 @@ if mode == "Today's Picks (Live)":
                 player, teammate = line.split(":", 1)
                 missing[player.strip()] = teammate.strip()
 
-        from markets.prizepicks import PrizePicksBlockedError
+        with st.spinner(f"Fetching {sport.label} schedule and live market lines..."):
+            slate = sport.build_auto_slate(missing)
 
-        slate = None
-        try:
-            with st.spinner(f"Fetching {sport.label} schedule and PrizePicks lines..."):
-                slate = sport.build_auto_slate(missing)
-        except PrizePicksBlockedError as e:
-            st.error(
-                f"**PrizePicks blocked this request** ({e}). This is DataDome, PrizePicks' "
-                "anti-bot protection — it can trigger even locally if this IP has made a lot "
-                "of automated requests recently, not just from cloud/datacenter IPs. It usually "
-                "clears up after a while. Use **Manual Slate** in the meantime.",
-                icon="🚫",
-            )
-
-        if slate is not None and not slate:
+        if not slate:
             st.warning(
-                f"No props found for {sport.label} right now — the PrizePicks pull succeeded, "
-                "but no games are scheduled or lines haven't posted yet for this sport. "
-                "Try the **Manual Slate** tab to score specific props manually."
+                f"No props found for {sport.label} right now — Kalshi/Polymarket don't have "
+                "active player-prop markets for this sport at the moment. Try the "
+                "**Manual Slate** tab to score specific props manually."
             )
-        elif slate:
+        else:
             with st.spinner(f"Scoring {len(slate)} props..."):
                 picks   = generate_picks(sport, slate, missing)
                 parlays = generate_parlays(picks)
@@ -391,3 +496,9 @@ elif mode == "Prediction Markets":
     st.title("🔀 Prediction Markets")
     st.markdown(f"Kalshi vs Polymarket discrepancies for {sport.label}.")
     _display_market_discrepancies(sport_key)
+
+# ── Ambiguous Markets ─────────────────────────────────────────────────────────
+elif mode == "Ambiguous Markets":
+    st.title("🎲 Ambiguous Markets")
+    st.markdown(f"Toss-ups and high-conviction disagreements for {sport.label}.")
+    _display_ambiguous_markets(sport_key)

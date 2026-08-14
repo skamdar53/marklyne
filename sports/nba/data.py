@@ -60,6 +60,19 @@ def get_team_abbr(team_id):
     return None
 
 
+def get_player_team(player_id):
+    """
+    Returns a player's current team abbreviation, derived from their most
+    recent game log's MATCHUP field ("LAL vs. GSW" / "LAL @ GSW" — the team
+    is always the first token). Needed now that prop lines come from Kalshi/
+    Polymarket, which don't hand us a team the way PrizePicks used to.
+    """
+    logs = get_game_logs(player_id, n_games=1)
+    if logs.empty:
+        return None
+    return logs.iloc[0]["MATCHUP"].split(" ")[0]
+
+
 # ── Game logs ─────────────────────────────────────────────────────────────────
 
 _game_log_cache = {}
@@ -393,13 +406,3 @@ def get_todays_games():
             "away_team_id": away_id,
         })
     return games
-
-
-def build_team_lookup():
-    """Maps team abbreviation and nickname variations to standard abbreviation."""
-    lookup = {}
-    for t in teams.get_teams():
-        lookup[t["abbreviation"].lower()] = t["abbreviation"]
-        lookup[t["nickname"].lower()]     = t["abbreviation"]
-        lookup[t["full_name"].lower()]    = t["abbreviation"]
-    return lookup

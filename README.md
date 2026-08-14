@@ -1,13 +1,13 @@
 # Marklyne
 
-A multi-sport player-prop scoring engine that cross-references live PrizePicks lines
-against real-time Kalshi and Polymarket prediction markets, and backtests every model
-with no-lookahead historical simulation.
+A multi-sport player-prop scoring engine built directly on live Kalshi and Polymarket
+prediction markets — no third-party prop book in the loop — with no-lookahead historical
+backtesting for every model.
 
 Covers **NBA, MLB, NFL, and NHL**. Each sport gets its own tailored, independently
 researched factor model — not one generic model reused across sports — combined into a
 single 0-100% confidence score per prop, with a volume-weighted cross-market signal
-folded in wherever Kalshi or Polymarket price the same outcome.
+folded in wherever Kalshi and/or Polymarket price the same outcome.
 
 ## How it works
 
@@ -27,44 +27,59 @@ Each prop lands in a confidence bucket:
 - 🔴 **Aggressive** — 50-56% (high risk, small bet sizing)
 - ⚪ **Skip** — below 50% (not recommended)
 
-## Cross-market signal (Kalshi + Polymarket)
+## Kalshi + Polymarket: the line source, not just a signal
 
-Kalshi and Polymarket both run live sports prediction markets with public, unauthenticated
-read APIs. Marklyne pulls current prices and trading volume from both and uses them two ways:
+Kalshi and Polymarket both run live sports prediction markets with public,
+unauthenticated read APIs — and both already state player-prop bets as a threshold the
+same way a sportsbook states a line (Kalshi's `floor_strike` markets, Polymarket's O/U
+questions), so there's no need for a middleman prop book at all. `markets/lines.py`
+pulls current player-prop markets from both platforms directly and de-duplicates them
+into the live slate for **Today's Picks** — no PrizePicks, no anti-bot fight.
 
-1. **A scoring factor.** Where a prediction market prices the same outcome as a PrizePicks
-   prop (Kalshi's `floor_strike` markets in particular map directly onto an over/under line —
-   e.g. "5+ hits" is functionally the same bet as a PrizePicks 4.5-hits line), its implied
-   probability is folded into that prop's confidence score, weighted by trading volume — a
-   market with heavy volume pulls the signal further from neutral than a thin one.
-2. **A standalone discrepancy view.** The **Prediction Markets** tab shows, game by game,
-   how far Kalshi's and Polymarket's independently-priced implied probabilities diverge from
-   each other — a live view into where two real-money markets disagree.
+The same data feeds three more things:
 
-Coverage varies by sport and by day (these are live, actively-traded markets, not a fixed
-dataset) — MLB and NFL currently have the deepest player-prop coverage; NBA and NHL prop
-markets pick back up in-season. When no market data exists for a given prop, the signal
-defaults to neutral and every other factor is reweighted as if it weren't there.
+1. **A scoring factor.** Wherever Kalshi or Polymarket price a prop at (or near) the
+   line being scored, its implied probability is folded into that prop's confidence
+   score, weighted by trading volume — a heavily-traded market pulls the signal further
+   from neutral than a thin one.
+2. **Prediction Markets tab.** Game by game, how far Kalshi's and Polymarket's
+   independently-priced implied win probabilities diverge from each other.
+3. **Ambiguous Markets tab.** Two more cuts across every live market (game outcomes and
+   player props, both platforms): **toss-ups** — priced within 7 points of a coin flip
+   yet still clearing a real volume floor (genuine uncertainty with real money behind
+   it) — and **high-conviction disagreements** — cross-platform gaps where *both* sides
+   are heavily traded, not just noise on a thin book.
+
+Coverage varies by sport and by day (these are live, actively-traded markets, not a
+fixed dataset) — MLB and NFL currently have the deepest player-prop coverage; NBA and
+NHL prop markets pick back up in-season. When no market data exists for a given prop,
+the signal defaults to neutral and every other factor is reweighted as if it weren't
+there.
 
 ## Modes
 
-- **Today's Picks (Live)** — pulls current lines from PrizePicks for the selected sport,
-  matches them to the schedule (home/away, rest/back-to-back), scores every prop, and
-  surfaces the best bets by confidence tier with 2/3/4-leg parlay suggestions.
-- **Manual Slate** — enter any player, opponent, prop, and line by hand. Useful for testing
-  specific matchups or when lines haven't posted yet.
-- **Backtest** — replays the algorithm against historical games for a player/opponent/prop
-  combination. At each historical game, the model is seeded with only the data that existed
-  before that game (no lookahead) and its predicted confidence is compared against the actual
-  result, with a simulated bankroll tracked using realistic PrizePicks payout multipliers.
+- **Today's Picks (Live)** — pulls current player-prop lines straight from Kalshi and
+  Polymarket for the selected sport, matches them to the schedule (home/away,
+  rest/back-to-back), scores every prop, and surfaces the best bets by confidence tier
+  with 2/3/4-leg parlay suggestions.
+- **Manual Slate** — enter any player, opponent, prop, and line by hand. Useful for
+  testing specific matchups or scoring a prop that isn't trading yet.
+- **Backtest** — replays the algorithm against historical games for a player/opponent/
+  prop combination. At each historical game, the model is seeded with only the data
+  that existed before that game (no lookahead) and its predicted confidence is compared
+  against the actual result, with a simulated bankroll tracked using realistic payout
+  multipliers.
 - **Prediction Markets** — the Kalshi vs. Polymarket discrepancy view described above.
+- **Ambiguous Markets** — the toss-up / high-conviction-disagreement view above.
+
+A scrolling ticker bar across the top of the app shows a live, volume-sorted feed of
+Kalshi and Polymarket prices across all four sports at once.
 
 ## Tech stack
 
 - **Python** — core algorithm, sport-agnostic scoring engine + one module per sport
 - **nba_api**, **pybaseball**, **nflreadpy**, official **NHL API** — per-sport stat data
-- **PrizePicks** (unofficial API) — live player prop lines
-- **Kalshi**, **Polymarket** (public REST APIs) — prediction-market prices and volume
+- **Kalshi**, **Polymarket** (public REST APIs) — prop lines, prices, and volume
 - **Streamlit** — interactive dashboard
 - **Plotly** — confidence charts and bankroll visualization
 
@@ -92,10 +107,10 @@ sports/
   registry.py    wires all four sports together
   nba/ mlb/ nfl/ nhl/   data.py (stat sources) + factors.py (scoring + reasoning) + config.py
 markets/
-  prizepicks.py  generalized PrizePicks client (any league)
   kalshi.py      public Kalshi market data client
   polymarket.py  public Polymarket (Gamma + CLOB) market data client
-  discrepancy.py cross-market signal + standalone discrepancy view
+  lines.py       de-duplicated live prop lines sourced from both platforms
+  discrepancy.py cross-market scoring signal, discrepancy view, ambiguous-markets view, ticker feed
 backtest/        no-lookahead simulator + fake-bankroll tracker (sport-agnostic)
 app.py           Streamlit dashboard
 main.py          CLI entry point
@@ -106,13 +121,13 @@ Adding a fifth sport means writing one new `sports/<sport>/` package against the
 
 ## Limitations
 
-- PrizePicks' unofficial API is protected by DataDome, which fingerprints client behavior
-  and flags datacenter/cloud IPs far more aggressively than residential ones — live pulls
-  work locally but are typically blocked on hosted deployments. Use Manual Slate there.
 - Kalshi and Polymarket player-prop coverage is live-market-dependent, not fixed — it's
-  deepest for in-season sports with active betting volume and can be sparse or empty
+  deepest for in-season sports with active trading volume and can be sparse or empty
   out of season.
-- `nba_api` and the NHL/MLB/NFL data sources are all unofficial or undocumented (no vendor
-  SLA) — expect occasional upstream schema changes.
+- `nba_api` and the NHL/MLB/NFL data sources are all unofficial or undocumented (no
+  vendor SLA) — expect occasional upstream schema changes.
+- Cross-platform matching (team codes, player names, game dates) is inherently fuzzy —
+  it's patched for known naming differences but will miss some pairings, especially
+  around doubleheaders and midseason trades.
 - Position-level defensive data sometimes falls back to team-level stats when a sport's
   primary endpoint is unavailable.

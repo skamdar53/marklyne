@@ -1,17 +1,15 @@
 # sports/mlb/factors.py — MLB scoring factors and SportModule implementation
 
-from collections import defaultdict
-
 import pandas as pd
 
 from sports.base import SportModule
 from sports.mlb import data as mlb
 from sports.mlb.config import (
-    WEIGHTS, PROP_TYPES, PROP_TYPE_LABELS, PRIZEPICKS_PROP_MAP, POSITION_OPTIONS,
-    PRIZEPICKS_LEAGUE_ID, PITCHER_PROP_TYPES, SEASON, N_GAMES, BACKTEST_SEASONS,
+    WEIGHTS, PROP_TYPES, PROP_TYPE_LABELS, POSITION_OPTIONS,
+    PITCHER_PROP_TYPES, SEASON, N_GAMES, BACKTEST_SEASONS,
     MIN_LINE,
 )
-from markets.prizepicks import get_prizepicks_lines
+from markets.lines import get_market_prop_lines
 
 
 # League-average reference points every rate-stat comparison is scored against.
@@ -379,7 +377,6 @@ class MLBSport(SportModule):
     label = "MLB"
     icon = "⚾"
 
-    prizepicks_league_id = PRIZEPICKS_LEAGUE_ID
     prop_types = PROP_TYPES
     prop_type_labels = PROP_TYPE_LABELS
     position_options = POSITION_OPTIONS
@@ -505,9 +502,8 @@ class MLBSport(SportModule):
         return mlb.get_todays_games()
 
     def build_auto_slate(self, missing_teammates=None, lines=None):
-        games       = mlb.get_todays_games()
-        team_lookup = mlb.build_team_lookup()
-        rest_days   = mlb.get_team_rest_days()
+        games     = mlb.get_todays_games()
+        rest_days = mlb.get_team_rest_days()
 
         playing_today = set()
         home_teams    = set()
@@ -524,13 +520,26 @@ class MLBSport(SportModule):
             starter_map[away] = g["home_probable"]
 
         if lines is None:
-            lines = get_prizepicks_lines(PRIZEPICKS_LEAGUE_ID, PRIZEPICKS_PROP_MAP, PROP_TYPES)
+            lines = get_market_prop_lines("mlb", PROP_TYPES)
 
-        grouped = defaultdict(list)
-        meta = {}
+        # Kalshi/Polymarket prop rows don't carry a team the way PrizePicks'
+        # did, so resolve each player's current team once and cache it — an MLB
+        # board quotes several props per player (and both batter and pitcher
+        # props for the same name), so the same player comes around repeatedly.
+        team_cache = {}
 
+        # markets.lines.get_market_prop_lines() already de-dupes same-threshold
+        # duplicates across Kalshi/Polymarket, so each line here is a distinct
+        # real bet (e.g. a player can have both a 0.5 and a 2.5 hits line) —
+        # emit one slate entry per line rather than collapsing them, which
+        # would silently discard genuinely different props.
+        slate = []
         for line in lines:
-            team_abbr = team_lookup.get(line.get("team", "").strip().lower())
+            player_name = line["player_name"]
+            if player_name not in team_cache:
+                team_cache[player_name] = mlb.get_player_team(player_name)
+            team_abbr = team_cache[player_name]
+
             if not team_abbr or team_abbr not in playing_today:
                 continue
 
@@ -538,30 +547,21 @@ class MLBSport(SportModule):
             if not opponent:
                 continue
 
-            key = (line["player_name"], line["prop_type"])
-            grouped[key].append(line["line"])
-            if key not in meta:
-                starter = starter_map.get(team_abbr) or {}
-                meta[key] = {
-                    "player_name":      line["player_name"],
-                    "team":             team_abbr,
-                    "opponent":         opponent,
-                    "prop_type":        line["prop_type"],
-                    "is_home":          team_abbr in home_teams,
-                    "position":         "Pitcher" if line["prop_type"] in PITCHER_PROP_TYPES else "Batter",
-                    "days_rest":        rest_days.get(team_abbr),
-                    "opp_pitcher_id":   starter.get("id"),
-                    "opp_pitcher_hand": starter.get("hand"),
-                    "opp_pitcher_name": starter.get("name"),
-                    "season":           SEASON,
-                }
-
-        slate = []
-        for key, line_values in grouped.items():
-            line_values.sort()
-            entry = dict(meta[key])
-            entry["line"] = line_values[len(line_values) // 2]
-            slate.append(entry)
+            starter = starter_map.get(team_abbr) or {}
+            slate.append({
+                "player_name":      player_name,
+                "team":             team_abbr,
+                "opponent":         opponent,
+                "prop_type":        line["prop_type"],
+                "line":             line["line"],
+                "is_home":          team_abbr in home_teams,
+                "position":         "Pitcher" if line["prop_type"] in PITCHER_PROP_TYPES else "Batter",
+                "days_rest":        rest_days.get(team_abbr),
+                "opp_pitcher_id":   starter.get("id"),
+                "opp_pitcher_hand": starter.get("hand"),
+                "opp_pitcher_name": starter.get("name"),
+                "season":           SEASON,
+            })
 
         return sorted(slate, key=lambda x: x["player_name"])
 

@@ -121,6 +121,38 @@ def get_team_abbr(team_name):
     return lookup.get(key)
 
 
+def get_player_team(player_name):
+    """
+    Returns a player's current team tricode, or None.
+
+    Needed now that prop lines come from Kalshi/Polymarket, which don't hand
+    us a team the way PrizePicks used to. Prefers the teamAbbrev on the most
+    recent game log (correct after an in-season trade, and it reuses the game
+    log cache every other factor already populates for this player, so it
+    costs no extra fetch in practice). Falls back to the team the NHL search
+    service reports, which is the only thing available in the offseason or
+    before a player's first game of the season.
+    """
+    info = get_player_info(player_name)
+    if not info:
+        return None
+
+    try:
+        logs = get_game_logs(info["player_id"], n_games=1)
+    except Exception:
+        logs = pd.DataFrame()
+
+    if not logs.empty and "teamAbbrev" in logs.columns:
+        abbr = logs.iloc[0]["teamAbbrev"]
+        if isinstance(abbr, str) and abbr.strip():
+            return get_team_abbr(abbr) or abbr.strip().upper()
+
+    fallback = (info.get("team") or "").strip()
+    if not fallback:
+        return None
+    return get_team_abbr(fallback) or fallback.upper()
+
+
 @st.cache_data(ttl=86400)
 def _team_id_to_abbr():
     """The team summary endpoint keys on teamId, so we need the id -> tricode map."""

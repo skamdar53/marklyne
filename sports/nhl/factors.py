@@ -5,17 +5,15 @@
 # the over, while for a goalie facing a high-volume offense is what drives
 # saves. ctx["is_goalie"] is the switch.
 
-from collections import defaultdict
-
 import pandas as pd
 
 from sports.base import SportModule
 from sports.nhl import data as nhl
 from sports.nhl.config import (
-    WEIGHTS, PROP_TYPES, PROP_TYPE_LABELS, PRIZEPICKS_PROP_MAP, GOALIE_PROP_TYPES,
-    POSITION_OPTIONS, PRIZEPICKS_LEAGUE_ID, N_GAMES, SEASON, BACKTEST_SEASONS,
+    WEIGHTS, PROP_TYPES, PROP_TYPE_LABELS, GOALIE_PROP_TYPES,
+    POSITION_OPTIONS, N_GAMES, SEASON, BACKTEST_SEASONS,
 )
-from markets.prizepicks import get_prizepicks_lines
+from markets.lines import get_market_prop_lines
 
 
 def _clamp(value, low=0.05, high=0.95):
@@ -333,7 +331,6 @@ class NHLSport(SportModule):
     label = "NHL"
     icon = "🏒"
 
-    prizepicks_league_id = PRIZEPICKS_LEAGUE_ID
     prop_types = PROP_TYPES
     prop_type_labels = PROP_TYPE_LABELS
     position_options = POSITION_OPTIONS
@@ -401,7 +398,6 @@ class NHLSport(SportModule):
             missing_teammates = {}
 
         games            = nhl.get_todays_games()
-        team_lookup      = nhl.build_team_lookup()
         played_yesterday = nhl.get_yesterdays_teams()
 
         playing_today = set()
@@ -414,13 +410,25 @@ class NHLSport(SportModule):
             opponent_map[g["away_team"]] = g["home_team"]
 
         if lines is None:
-            lines = get_prizepicks_lines(PRIZEPICKS_LEAGUE_ID, PRIZEPICKS_PROP_MAP, PROP_TYPES)
+            lines = get_market_prop_lines("nhl", PROP_TYPES)
 
-        grouped = defaultdict(list)
-        meta = {}
+        # Kalshi/Polymarket prop rows carry neither a team nor a position the
+        # way PrizePicks' did, so resolve both per player and cache them —
+        # one player usually shows up across several props.
+        player_cache = {}
 
+        slate = []
         for line in lines:
-            team_abbr = team_lookup.get(line.get("team", "").strip().lower())
+            player_name = line["player_name"]
+            if player_name not in player_cache:
+                info = nhl.get_player_info(player_name)
+                player_cache[player_name] = {
+                    "team":     nhl.get_player_team(player_name),
+                    "position": (info or {}).get("position", ""),
+                }
+            resolved = player_cache[player_name]
+            team_abbr = resolved["team"]
+
             if not team_abbr or team_abbr not in playing_today:
                 continue
 
@@ -428,25 +436,20 @@ class NHLSport(SportModule):
             if not opponent:
                 continue
 
-            key = (line["player_name"], line["prop_type"])
-            grouped[key].append(line["line"])
-            if key not in meta:
-                meta[key] = {
-                    "player_name": line["player_name"],
-                    "team":        team_abbr,
-                    "opponent":    opponent,
-                    "prop_type":   line["prop_type"],
-                    "is_home":     team_abbr in home_teams,
-                    "is_b2b":      team_abbr in played_yesterday,
-                    "position":    line.get("position", ""),
-                }
-
-        slate = []
-        for key, line_values in grouped.items():
-            line_values.sort()
-            entry = dict(meta[key])
-            entry["line"] = line_values[len(line_values) // 2]
-            slate.append(entry)
+            # No de-duping pass here: markets/lines.py already collapses the
+            # same bet quoted on both platforms, and the distinct thresholds
+            # it does keep are genuinely different bets, not noise to median
+            # away the way duplicate PrizePicks rows were.
+            slate.append({
+                "player_name": player_name,
+                "team":        team_abbr,
+                "opponent":    opponent,
+                "prop_type":   line["prop_type"],
+                "line":        line["line"],
+                "is_home":     team_abbr in home_teams,
+                "is_b2b":      team_abbr in played_yesterday,
+                "position":    resolved["position"],
+            })
 
         return sorted(slate, key=lambda x: x["player_name"])
 
@@ -485,7 +488,7 @@ class NHLSport(SportModule):
                     continue
 
                 # Sportsbook proxy: trailing average snapped to the nearest
-                # half-integer. PrizePicks never posts a whole-number line, and
+                # half-integer, matching how prop lines are actually posted —
                 # with hockey's small counting stats a whole-number line would
                 # turn frequent pushes into recorded misses.
                 avg = sum(values) / len(values)

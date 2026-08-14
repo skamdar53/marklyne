@@ -8,8 +8,6 @@ STATCAST_WINDOW_DAYS = 45  # trailing window for Statcast quality-of-contact pul
 
 BACKTEST_SEASONS = [2025, 2024, 2023]
 
-PRIZEPICKS_LEAGUE_ID = 2
-
 PROP_TYPES = [
     "hits",
     "total_bases",
@@ -35,41 +33,14 @@ PROP_TYPE_LABELS = {
 # several factors flip meaning for them (see factors.py).
 PITCHER_PROP_TYPES = {"pitcher_strikeouts"}
 
-# Maps PrizePicks' raw stat_type (lowercased, spaces -> underscores) to our
-# normalized prop type names.
-#
-# UNCONFIRMED: PrizePicks' API is behind DataDome and returned 403 from this
-# machine, so unlike NBA's map these raw strings could not be verified against a
-# live MLB board. They follow PrizePicks' documented naming ("Hits", "Total
-# Bases", "Hitter Strikeouts", "Pitcher Strikeouts", ...) run through the same
-# lowercase + underscore normalization markets/prizepicks.py applies. Several
-# plausible spellings are mapped to the same normalized name so a near-miss
-# still resolves. Worth re-checking against a live pull during QA.
-PRIZEPICKS_PROP_MAP = {
-    "hits":                  "hits",
-    "total_bases":           "total_bases",
-    "home_runs":             "home_runs",
-    "hr":                    "home_runs",
-    "rbis":                  "rbis",
-    "rbi":                   "rbis",
-    "runs":                  "runs",
-    "runs_scored":           "runs",
-    "hits+runs+rbis":        "hits+runs+rbis",
-    "hitter_fantasy_score":  None,   # explicitly unsupported, listed to document it exists
-    "pitcher_strikeouts":    "pitcher_strikeouts",
-    "strikeouts":            "pitcher_strikeouts",
-}
-PRIZEPICKS_PROP_MAP = {k: v for k, v in PRIZEPICKS_PROP_MAP.items() if v}
-
-# PrizePicks positions come through as real defensive positions (SS, RF, SP...).
-# Nothing in build_context branches on them — the pitcher/batter split is driven
-# by prop_type via PITCHER_PROP_TYPES — so the manual-slate UI only needs the
-# two buckets that actually change how a prop is scored.
+# Nothing in build_context branches on a defensive position — the pitcher/batter
+# split is driven by prop_type via PITCHER_PROP_TYPES — so the manual-slate UI
+# only needs the two buckets that actually change how a prop is scored.
 POSITION_OPTIONS = ["Batter", "Pitcher"]
 
 # Synthetic backtest lines are floored here so that inferring a line from a
-# trailing average never produces an unbeatable 0.0 on a low-count prop
-# (PrizePicks never posts a home-run line below 0.5 either).
+# trailing average never produces an unbeatable 0.0 on a low-count prop (no
+# sportsbook posts a home-run line below 0.5 either).
 MIN_LINE = 0.5
 
 # Scoring weights — must sum to 1.0. "market_signal" is populated from

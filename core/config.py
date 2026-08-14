@@ -6,7 +6,10 @@ EASY_THRESHOLD       = 0.62  # 62%+ confidence
 MODERATE_THRESHOLD   = 0.56  # 56-62% confidence
 AGGRESSIVE_THRESHOLD = 0.50  # 50-56% confidence
 
-# PrizePicks payout multipliers (after the house cut)
+# Payout multipliers for the backtest bankroll simulator, modeled on
+# PrizePicks-style odds (after the house cut) — this is just the payout
+# convention used to make backtested bankroll swings realistic, unrelated
+# to where lines come from (that's Kalshi/Polymarket, see markets/lines.py).
 SINGLE_PAYOUT  = 0.91
 PARLAY_PAYOUTS = {2: 3.0, 3: 5.0, 4: 10.0, 5: 20.0, 6: 25.0}
 

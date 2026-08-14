@@ -1,7 +1,7 @@
 # main.py — run Marklyne's picks/backtest engine from the CLI
 #
 # Usage:
-#   python3 main.py live      --sport nba   — auto-pull today's PrizePicks slate and generate picks
+#   python3 main.py live      --sport nba   — auto-pull today's Kalshi/Polymarket lines and generate picks
 #   python3 main.py manual    --sport nba   — use the manual SLATE defined below
 #   python3 main.py backtest  --sport nba   — backtest the algorithm on historical data
 

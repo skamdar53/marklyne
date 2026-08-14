@@ -9,8 +9,6 @@ MIN_GAMES_VS_TEAM = 3    # minimum games vs a team to use matchup data
 # Seasons pulled for backtesting, oldest first.
 BACKTEST_SEASONS = ["20232024", "20242025", "20252026"]
 
-PRIZEPICKS_LEAGUE_ID = 8
-
 # api-web.nhle.com game logs expose goals/assists/points/shots/powerPlayPoints
 # for skaters and shotsAgainst/goalsAgainst for goalies. They do NOT expose
 # blocked shots, so "blocked_shots" is deliberately left out — there's no
@@ -36,35 +34,10 @@ PROP_TYPE_LABELS = {
 # Prop types that only apply to goalies — scored with a separate factor path.
 GOALIE_PROP_TYPES = {"saves"}
 
-# Maps PrizePicks' raw stat_type (lowercased, spaces -> underscores) to our
-# normalized prop type names.
-#
-# UNVERIFIED: these were not confirmed against a live PrizePicks NHL board
-# (DataDome blocks the API from this machine, and the NHL season is between
-# years right now). "shots_on_goal", "points", "goals", "assists" and "saves"
-# match PrizePicks' usual naming; the goalie/PP variants are the most likely
-# to be wrong. Extra spellings are mapped defensively — unmapped stat_types
-# are silently dropped by markets/prizepicks.py, so a wrong guess costs us
-# props rather than producing bad ones.
-PRIZEPICKS_PROP_MAP = {
-    "shots_on_goal":        "shots_on_goal",
-    "shots":                "shots_on_goal",
-    "sog":                  "shots_on_goal",
-    "points":               "points",
-    "goals":                "goals",
-    "goals_scored":         "goals",
-    "assists":              "assists",
-    "saves":                "saves",
-    "goalie_saves":         "saves",
-    "power_play_points":    "power_play_points",
-    "powerplay_points":     "power_play_points",
-    "pp_points":            "power_play_points",
-}
-
 POSITION_OPTIONS = ["C", "LW", "RW", "D", "G"]
 
-# PrizePicks and MoneyPuck occasionally use short team codes that don't match
-# the NHL's official tricodes.
+# Kalshi/Polymarket and MoneyPuck occasionally use short team codes that don't
+# match the NHL's official tricodes.
 TEAM_ABBR_ALIASES = {
     "la":  "LAK",
     "sj":  "SJS",

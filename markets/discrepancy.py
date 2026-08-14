@@ -35,7 +35,7 @@ VOLUME_HALF_WEIGHT = 2500.0
 # How far a market's threshold may sit from our line before we stop believing
 # it describes the same bet. Scales with the line so it works for both a 0.5
 # home-run prop and a 275.5 passing-yards prop.
-def _line_tolerance(line):
+def line_tolerance(line):
     return max(1.0, abs(line) * 0.15)
 
 # Widest bid/ask we'll treat as a real price. Past this the "market opinion"
@@ -80,7 +80,7 @@ def _canon_code(code):
     return TEAM_CODE_ALIASES.get(c, c)
 
 
-def _normalize_name(name):
+def normalize_name(name):
     """
     Fold a person/team name to a comparable form: strip accents, punctuation,
     case, and common generational suffixes. 'Ronald Acuña Jr.' -> 'ronald acuna'.
@@ -95,13 +95,13 @@ def _normalize_name(name):
     return " ".join(tokens)
 
 
-def _names_match(a, b):
+def names_match(a, b):
     """
     Same player? Exact normalized match, or last name plus first initial —
     which covers 'C. Seager' / 'Corey Seager' and most feed disagreements
     without collapsing distinct players onto each other.
     """
-    na, nb = _normalize_name(a), _normalize_name(b)
+    na, nb = normalize_name(a), normalize_name(b)
     if not na or not nb:
         return False
     if na == nb:
@@ -113,7 +113,7 @@ def _names_match(a, b):
     return ta[-1] == tb[-1] and ta[0][:1] == tb[0][:1]
 
 
-def _slate_start():
+def slate_start():
     """
     Oldest game date we care about, as "YYYY-MM-DD": yesterday, so games that
     started late last night and haven't settled yet still count. Day
@@ -143,7 +143,7 @@ def _threshold_confidence(threshold, line):
     Kalshi '5+ total bases' market is only evidence about a 4.5 PrizePicks
     line to the extent the two describe the same bet.
     """
-    tol = _line_tolerance(line)
+    tol = line_tolerance(line)
     gap = abs(float(threshold) - float(line))
     if gap >= tol:
         return 0.0
@@ -171,14 +171,14 @@ def _best_prop_match(candidates, player_name, prop_type, line):
         if prop_type and c.get("prop_type") and \
                 str(c["prop_type"]).lower() != str(prop_type).lower():
             continue
-        if not _names_match(c.get("player_name"), player_name):
+        if not names_match(c.get("player_name"), player_name):
             continue
 
         threshold = c.get("threshold")
         if threshold is None:
             continue
         gap = abs(float(threshold) - float(line))
-        if gap >= _line_tolerance(line):
+        if gap >= line_tolerance(line):
             continue
         if best_gap is None or gap < best_gap:
             best, best_gap = c, gap
@@ -312,7 +312,7 @@ def get_market_signal_score(sport_key, player_name, team_abbr, opponent_abbr,
         print(f"Kalshi prop signal error ({player_name} {prop_type}): {e}")
 
     try:
-        p_props = polymarket.get_player_prop_markets(sport, _slate_start())
+        p_props = polymarket.get_player_prop_markets(sport, slate_start())
         p_match = _best_prop_match(p_props, player_name, prop_type, line)
         if p_match:
             # Polymarket Gamma exposes no bid/ask, so treat the quoted
@@ -335,7 +335,7 @@ def get_market_signal_score(sport_key, player_name, team_abbr, opponent_abbr,
 
     for source, fetch in (
         ("kalshi", lambda: kalshi.get_game_outcome_markets(sport)),
-        ("polymarket", lambda: polymarket.get_game_outcome_markets(sport, _slate_start())),
+        ("polymarket", lambda: polymarket.get_game_outcome_markets(sport, slate_start())),
     ):
         try:
             row = _find_team_game_market(fetch(), team_abbr, opponent_abbr)
@@ -394,7 +394,7 @@ def get_platform_discrepancies(sport_key):
         k_rows = []
 
     try:
-        p_rows = polymarket.get_game_outcome_markets(sport, _slate_start())
+        p_rows = polymarket.get_game_outcome_markets(sport, slate_start())
     except Exception as e:
         print(f"Polymarket discrepancy fetch error ({sport}): {e}")
         p_rows = []
@@ -439,7 +439,188 @@ def get_platform_discrepancies(sport_key):
             "gap":               round(abs(float(k_prob) - float(p_prob)), 4),
             "kalshi_volume":     float(k.get("volume") or 0.0),
             "polymarket_volume": float(p.get("volume") or 0.0),
+            "market_kind":       "game",
         })
 
     out.sort(key=lambda r: r["gap"], reverse=True)
     return out
+
+
+def _prop_platform_discrepancies(sport):
+    """
+    Player-prop markets priced on BOTH platforms at (near) the same
+    threshold, with each platform's implied probability and the gap. Same
+    shape as get_platform_discrepancies() (tagged market_kind="prop" instead
+    of "game") so the UI can list them together.
+    """
+    try:
+        k_props = kalshi.get_player_prop_markets(sport)
+    except Exception as e:
+        print(f"Kalshi prop discrepancy fetch error ({sport}): {e}")
+        k_props = []
+
+    try:
+        p_props = polymarket.get_player_prop_markets(sport, slate_start())
+    except Exception as e:
+        print(f"Polymarket prop discrepancy fetch error ({sport}): {e}")
+        p_props = []
+
+    if not k_props or not p_props:
+        return []
+
+    out = []
+    seen = set()
+    for k in k_props:
+        threshold = k.get("threshold")
+        if threshold is None:
+            continue
+        match = _best_prop_match(p_props, k.get("player_name"), k.get("prop_type"), threshold)
+        if not match:
+            continue
+
+        dedupe_key = (normalize_name(k.get("player_name")), k.get("prop_type"), round(float(threshold), 1))
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
+        k_prob, p_prob = k.get("implied_prob"), match.get("implied_prob")
+        if k_prob is None or p_prob is None:
+            continue
+
+        out.append({
+            "game":              k.get("title") or match.get("question") or "",
+            "outcome_label":     f"{k.get('player_name')} {k.get('prop_type')} over {threshold}",
+            "kalshi_prob":       round(float(k_prob), 4),
+            "polymarket_prob":   round(float(p_prob), 4),
+            "gap":               round(abs(float(k_prob) - float(p_prob)), 4),
+            "kalshi_volume":     float(k.get("volume") or 0.0),
+            "polymarket_volume": float(match.get("volume") or 0.0),
+            "market_kind":       "prop",
+        })
+
+    return out
+
+
+# ── Public: ambiguous / high-conviction markets (UI only) ─────────────────
+
+# Within this many points of a coin flip counts as "too close to call".
+TOSSUP_BAND = 0.07
+
+# Roughly 2x VOLUME_HALF_WEIGHT — a market with real conviction behind it,
+# not just a couple of opening trades. Same floor for both toss-ups (real
+# money still piling into a genuine coin flip) and disagreements (both sides
+# of a cross-platform gap need to be well-capitalized, not just noise on a
+# thin book).
+HIGH_VOLUME_FLOOR = 5000.0
+
+
+@st.cache_data(ttl=300)
+def get_ambiguous_markets(sport_key):
+    """
+    Two cuts of "interesting" markets for the Ambiguous Markets UI tab,
+    across game-outcome and player-prop markets on both platforms:
+
+      toss_ups: priced within TOSSUP_BAND of 50/50 (genuine outcome
+                uncertainty) yet still cleared HIGH_VOLUME_FLOOR in trading
+                volume — real conviction behind a bet nobody's sure of.
+      disagreements: get_platform_discrepancies() + the player-prop
+                version, filtered to pairs where BOTH platforms cleared
+                HIGH_VOLUME_FLOOR — two well-capitalized markets actively
+                pricing the same outcome differently, sorted by |gap|.
+
+    Returns {"toss_ups": [...], "disagreements": [...]}. Informational only.
+    """
+    sport = (sport_key or "").lower()
+
+    sources = []
+    for label, fetch in (
+        ("kalshi",     lambda: [dict(r, market_kind="game") for r in kalshi.get_game_outcome_markets(sport)]),
+        ("kalshi",     lambda: [dict(r, market_kind="prop") for r in kalshi.get_player_prop_markets(sport)]),
+        ("polymarket", lambda: [dict(r, market_kind="game") for r in polymarket.get_game_outcome_markets(sport, slate_start())]),
+        ("polymarket", lambda: [dict(r, market_kind="prop") for r in polymarket.get_player_prop_markets(sport, slate_start())]),
+    ):
+        try:
+            sources.extend(dict(r, source=label) for r in fetch())
+        except Exception as e:
+            print(f"ambiguous markets fetch error ({label}, {sport}): {e}")
+
+    toss_ups = []
+    for r in sources:
+        prob = r.get("implied_prob")
+        volume = float(r.get("volume") or 0.0)
+        if prob is None or volume < HIGH_VOLUME_FLOOR or abs(float(prob) - 0.5) > TOSSUP_BAND:
+            continue
+
+        if r["market_kind"] == "prop":
+            label = f"{r.get('player_name', '?')} {r.get('prop_type', '')} over {r.get('threshold', '')}".strip()
+            game = r.get("title") or r.get("question") or ""
+        else:
+            label = f"{r.get('team', '?')} to win"
+            game = r.get("game", "")
+
+        toss_ups.append({
+            "source":       r["source"],
+            "market_kind":  r["market_kind"],
+            "label":        label,
+            "game":         game,
+            "implied_prob": round(float(prob), 4),
+            "volume":       volume,
+        })
+
+    toss_ups.sort(key=lambda r: r["volume"], reverse=True)
+
+    disagreements = [
+        row for row in (get_platform_discrepancies(sport) + _prop_platform_discrepancies(sport))
+        if row["kalshi_volume"] >= HIGH_VOLUME_FLOOR and row["polymarket_volume"] >= HIGH_VOLUME_FLOOR
+    ]
+    disagreements.sort(key=lambda r: r["gap"], reverse=True)
+
+    return {"toss_ups": toss_ups, "disagreements": disagreements}
+
+
+# ── Public: ticker feed (UI only) ─────────────────────────────────────────
+
+@st.cache_data(ttl=300)
+def get_ticker_items(source, sport_keys, limit=40):
+    """
+    A flat, volume-sorted feed of live markets across every sport for one
+    platform ("kalshi" or "polymarket") — game outcomes and player props
+    mixed together, for the scrolling ticker bar. Always something moving
+    even when a given sport is out of season, since it pulls from all four.
+
+    Returns a list of dicts: {label, implied_prob, volume}, highest volume
+    first, capped at `limit`. [] on total failure — the ticker just hides.
+    """
+    client = kalshi if source == "kalshi" else polymarket
+    items = []
+
+    for sport in sport_keys:
+        try:
+            for r in client.get_game_outcome_markets(sport):
+                if r.get("implied_prob") is None:
+                    continue
+                items.append({
+                    "label":        f"{sport.upper()} · {r.get('team', '?')} ML",
+                    "implied_prob": float(r["implied_prob"]),
+                    "volume":       float(r.get("volume") or 0.0),
+                })
+        except Exception as e:
+            print(f"ticker fetch error ({source}, {sport}, game): {e}")
+
+        try:
+            props = client.get_player_prop_markets(sport) if source == "kalshi" \
+                else client.get_player_prop_markets(sport, slate_start())
+            for r in props:
+                if r.get("implied_prob") is None:
+                    continue
+                items.append({
+                    "label":        f"{sport.upper()} · {r.get('player_name', '?')} "
+                                     f"{r.get('prop_type', '')} o{r.get('threshold', '')}",
+                    "implied_prob": float(r["implied_prob"]),
+                    "volume":       float(r.get("volume") or 0.0),
+                })
+        except Exception as e:
+            print(f"ticker fetch error ({source}, {sport}, prop): {e}")
+
+    items.sort(key=lambda r: r["volume"], reverse=True)
+    return items[:limit]

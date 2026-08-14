@@ -4,8 +4,6 @@ SEASON = "2025-26"
 N_GAMES = 10          # default lookback window for streak analysis
 MIN_GAMES_VS_TEAM = 3 # minimum games vs a team to use matchup data
 
-PRIZEPICKS_LEAGUE_ID = 7
-
 PROP_TYPES = [
     "points",
     "rebounds",
@@ -20,17 +18,6 @@ PROP_TYPE_LABELS = {
     "assists":              "Assists",
     "pts+reb+ast":          "PRA",
     "three_pointers_made":  "3PM",
-}
-
-# Maps PrizePicks' raw stat_type (lowercased, spaces -> underscores) to our
-# normalized prop type names
-PRIZEPICKS_PROP_MAP = {
-    "points":                   "points",
-    "rebounds":                 "rebounds",
-    "assists":                  "assists",
-    "points+rebounds+assists":  "pts+reb+ast",
-    "3-pt_made":                "three_pointers_made",
-    "3_pointers_made":          "three_pointers_made",
 }
 
 POSITION_OPTIONS = ["PG", "SG", "SF", "PF", "C"]

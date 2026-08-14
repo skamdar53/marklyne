@@ -70,6 +70,72 @@ def get_player_position(player_id):
     return row.iloc[0]["position"] if not row.empty else None
 
 
+_roster_cache = {}
+
+
+def roster_season():
+    """
+    The season nflverse's roster file is keyed to. It rolls over before the
+    schedule does (in August the current *season* is still last year's, but
+    rosters are already this year's), so don't reuse current_season() here.
+    """
+    try:
+        return nfl.get_current_season(roster=True)
+    except TypeError:  # older nflreadpy without the roster flag
+        return current_season()
+
+
+def _rosters():
+    season = roster_season()
+    if season not in _roster_cache:
+        try:
+            _roster_cache[season] = nfl.load_rosters(seasons=[season]).to_pandas()
+        except Exception as e:
+            print(f"NFL roster load error ({season}): {e}")
+            _roster_cache[season] = pd.DataFrame()
+    return _roster_cache[season]
+
+
+def get_player_team_position(player_id):
+    """
+    Returns (team_abbr, position) for a player from this season's roster.
+
+    Needed now that prop lines come from Kalshi/Polymarket, which state only a
+    player and a threshold — no team and no position, both of which PrizePicks
+    used to hand us. The roster carries both in one row, and position is not
+    optional for NFL: the defense-vs-position factor is 20% of the score.
+
+    Falls back to the players file (already cached for name lookups) when a
+    player isn't on a roster row — its latest_team lags roster moves, so it's
+    the fallback rather than the source. Either element may be None.
+    """
+    if not player_id:
+        return None, None
+
+    def _clean(value):
+        return None if value is None or pd.isna(value) else value
+
+    roster = _rosters()
+    if not roster.empty:
+        rows = roster[roster["gsis_id"] == player_id]
+        if not rows.empty:
+            row = rows.iloc[0]
+            team = get_team_abbr(_clean(row.get("team")))
+            if team:
+                return team, _clean(row.get("position"))
+
+    rows = _players()[_players()["gsis_id"] == player_id]
+    if rows.empty:
+        return None, None
+    row = rows.iloc[0]
+    return get_team_abbr(_clean(row.get("latest_team"))), _clean(row.get("position"))
+
+
+def get_player_team(player_id):
+    """The player's current team abbreviation, or None."""
+    return get_player_team_position(player_id)[0]
+
+
 def get_player_pfr_id(player_id):
     df = _players()
     row = df[df["gsis_id"] == player_id]
@@ -78,8 +144,9 @@ def get_player_pfr_id(player_id):
 
 _teams_cache = {}
 
-# nflverse uses LA/WAS/JAX/LV; PrizePicks and ESPN use some of the older or
-# longer abbreviations, and relocated franchises still show up in old data.
+# nflverse uses LA/WAS/JAX/LV; ESPN and the prediction markets use some of the
+# older or longer abbreviations, and relocated franchises still show up in old
+# data.
 _TEAM_ALIASES = {
     "lar": "LA", "stl": "LA", "rams": "LA",
     "lac": "LAC", "sd": "LAC", "sdg": "LAC",

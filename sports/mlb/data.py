@@ -145,6 +145,64 @@ def build_team_lookup():
     return lookup
 
 
+@st.cache_data(ttl=86400)
+def _player_team_index(season=SEASON):
+    """
+    Every player on an MLB roster mapped to their current team's abbreviation,
+    keyed by both MLBAM id and normalized full name.
+
+    One /sports/1/players call covers all 30 rosters at once, so resolving a
+    whole Kalshi/Polymarket board (a few hundred distinct players) costs a
+    single request rather than one per player — much cheaper than reading the
+    team off each player's game log the way the NBA module does.
+    """
+    try:
+        people = _api("sports/1/players", season=season).get("people", [])
+    except Exception as e:
+        print(f"MLB player index fetch error: {e}")
+        return {"by_id": {}, "by_name": {}}
+
+    abbrs = {t["id"]: t["abbreviation"] for t in _all_teams()}
+    by_id, by_name = {}, {}
+    for p in people:
+        abbr = abbrs.get((p.get("currentTeam") or {}).get("id"))
+        if not abbr:
+            continue
+        by_id[p["id"]] = abbr
+        # setdefault: on the rare duplicate name, the first (higher-level)
+        # entry wins rather than being silently overwritten.
+        by_name.setdefault(_normalize(p.get("fullName", "")), abbr)
+    return {"by_id": by_id, "by_name": by_name}
+
+
+def get_player_team(player, season=SEASON):
+    """
+    Returns a player's current team abbreviation, accepting either an MLBAM
+    player ID or a full name. Needed now that prop lines come from Kalshi/
+    Polymarket, which don't hand us a team the way PrizePicks used to.
+
+    Name lookups hit the cached league-wide index first and only fall back to
+    the Stats API's own player search when that misses — the markets
+    occasionally drop a suffix ("Michael Harris" for "Michael Harris II"), and
+    that fallback resolves it for the handful of names it affects without
+    costing a request for the ones that match directly. Returns None for
+    players not on an MLB roster (the boards quote some minor leaguers), which
+    callers treat the same as "not playing today".
+    """
+    index = _player_team_index(season)
+    if not isinstance(player, str):
+        return index["by_id"].get(player)
+
+    abbr = index["by_name"].get(_normalize(player))
+    if abbr:
+        return abbr
+    try:
+        player_id = get_player_id(player)
+    except Exception:
+        return None
+    return index["by_id"].get(player_id) if player_id else None
+
+
 # ── Game logs ─────────────────────────────────────────────────────────────────
 
 _HITTING_FIELDS = [

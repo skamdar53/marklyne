@@ -14,8 +14,7 @@ class SportModule(ABC):
     label: str                  # "NBA", "MLB", "NFL", "NHL" — display name
     icon: str                   # emoji for the UI
 
-    # ── PrizePicks integration ───────────────────────────────────────────
-    prizepicks_league_id: int
+    # ── Props ──────────────────────────────────────────────────────────────
     prop_types: list           # our normalized prop type names for this sport
     prop_type_labels: dict     # prop_type -> human label, e.g. "pts+reb+ast" -> "PRA"
 
@@ -59,9 +58,10 @@ class SportModule(ABC):
     @abstractmethod
     def build_auto_slate(self, missing_teammates=None, lines=None):
         """
-        Pulls current PrizePicks lines for this sport (or uses the ones
-        passed in) and enriches them with schedule context (home/away,
-        rest/back-to-back) to build a slate ready for core.picks.generate_picks.
+        Pulls current player-prop lines for this sport from Kalshi/Polymarket
+        (or uses the ones passed in) and enriches them with schedule context
+        (home/away, rest/back-to-back) to build a slate ready for
+        core.picks.generate_picks.
         """
         raise NotImplementedError
 

@@ -1,17 +1,15 @@
 # sports/nfl/factors.py — NFL scoring factors and SportModule implementation
 
-from collections import defaultdict
-
 import pandas as pd
 
 from sports.base import SportModule
 from sports.nfl import data as nfl
 from sports.nfl.config import (
-    WEIGHTS, PROP_TYPES, PROP_TYPE_LABELS, PRIZEPICKS_PROP_MAP,
-    POSITION_OPTIONS, PRIZEPICKS_LEAGUE_ID, N_GAMES, BACKTEST_SEASONS,
+    WEIGHTS, PROP_TYPES, PROP_TYPE_LABELS, MARKET_PROP_MAP,
+    POSITION_OPTIONS, N_GAMES, BACKTEST_SEASONS,
     BACKTEST_WINDOW, SHORT_WEEK_REST, LONG_REST,
 )
-from markets.prizepicks import get_prizepicks_lines
+from markets.lines import get_market_prop_lines
 
 
 def _clamp(value, low=0.0, high=1.0):
@@ -277,7 +275,6 @@ class NFLSport(SportModule):
     label = "NFL"
     icon = "🏈"
 
-    prizepicks_league_id = PRIZEPICKS_LEAGUE_ID
     prop_types = PROP_TYPES
     prop_type_labels = PROP_TYPE_LABELS
     position_options = POSITION_OPTIONS
@@ -371,8 +368,7 @@ class NFLSport(SportModule):
         if missing_teammates is None:
             missing_teammates = {}
 
-        games       = nfl.get_this_weeks_games()
-        team_lookup = nfl.build_team_lookup()
+        games = nfl.get_this_weeks_games()
 
         playing_this_week = set()
         home_teams        = set()
@@ -390,13 +386,33 @@ class NFLSport(SportModule):
             week, season = g["week"], g["season"]
 
         if lines is None:
-            lines = get_prizepicks_lines(PRIZEPICKS_LEAGUE_ID, PRIZEPICKS_PROP_MAP, PROP_TYPES)
+            # Kalshi/Polymarket name NFL props their own way ("passing_yards"),
+            # so ask for their spellings and normalize the rows back to ours.
+            lines = get_market_prop_lines("nfl", MARKET_PROP_MAP.keys())
 
-        grouped = defaultdict(list)
-        meta = {}
+        # Those rows carry neither team nor position — PrizePicks gave us both —
+        # so resolve each player off the roster once and cache it; a player
+        # usually has several props on the board.
+        player_cache = {}
 
+        # markets.lines.get_market_prop_lines() already de-dupes same-threshold
+        # duplicates across Kalshi/Polymarket, so each line here is a distinct
+        # real bet (e.g. a QB can have both a 249.5 and a 274.5 passing-yards
+        # line) — emit one slate entry per line rather than collapsing them
+        # to a median, which would silently discard genuinely different props.
+        slate = []
         for line in lines:
-            team_abbr = team_lookup.get(line.get("team", "").strip().lower())
+            prop_type = MARKET_PROP_MAP.get(line["prop_type"], line["prop_type"])
+            if prop_type not in PROP_TYPES:
+                continue
+
+            player_name = line["player_name"]
+            if player_name not in player_cache:
+                player_id = nfl.get_player_id(player_name)
+                player_cache[player_name] = (
+                    nfl.get_player_team_position(player_id) if player_id else (None, None))
+            team_abbr, raw_position = player_cache[player_name]
+
             if not team_abbr or team_abbr not in playing_this_week:
                 continue
 
@@ -404,31 +420,21 @@ class NFLSport(SportModule):
             if not opponent:
                 continue
 
-            key = (line["player_name"], line["prop_type"])
-            grouped[key].append(line["line"])
-            if key not in meta:
-                rest_days = rest_map.get(team_abbr, 7)
-                meta[key] = {
-                    "player_name":   line["player_name"],
-                    "team":          team_abbr,
-                    "opponent":      opponent,
-                    "prop_type":     line["prop_type"],
-                    "is_home":       team_abbr in home_teams,
-                    "position":      normalize_position(line.get("position")) or "WR",
-                    "rest_days":     rest_days,
-                    "is_short_week": rest_days <= SHORT_WEEK_REST,
-                    "week":          week,
-                    "season":        season,
-                }
-
-        slate = []
-        for key, line_values in grouped.items():
-            line_values.sort()
-            median_line = line_values[len(line_values) // 2]
-            entry = dict(meta[key])
-            entry["line"] = median_line
-            entry["missing_teammate"] = missing_teammates.get(entry["player_name"])
-            slate.append(entry)
+            rest_days = rest_map.get(team_abbr, 7)
+            slate.append({
+                "player_name":      player_name,
+                "team":             team_abbr,
+                "opponent":         opponent,
+                "prop_type":        prop_type,
+                "line":             line["line"],
+                "is_home":          team_abbr in home_teams,
+                "position":         normalize_position(raw_position) or "WR",
+                "rest_days":        rest_days,
+                "is_short_week":    rest_days <= SHORT_WEEK_REST,
+                "week":             week,
+                "season":           season,
+                "missing_teammate": missing_teammates.get(player_name),
+            })
 
         return sorted(slate, key=lambda x: x["player_name"])
 

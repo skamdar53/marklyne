@@ -1,17 +1,10 @@
 # sports/nba/factors.py — NBA scoring factors and SportModule implementation
 # (scoring math moved from the original algorithm/scoring.py, unchanged)
 
-from collections import defaultdict
-
-import pandas as pd
-
 from sports.base import SportModule
 from sports.nba import data as nba
-from sports.nba.config import (
-    WEIGHTS, PROP_TYPES, PROP_TYPE_LABELS, PRIZEPICKS_PROP_MAP,
-    POSITION_OPTIONS, PRIZEPICKS_LEAGUE_ID, N_GAMES,
-)
-from markets.prizepicks import get_prizepicks_lines
+from sports.nba.config import WEIGHTS, PROP_TYPES, PROP_TYPE_LABELS, POSITION_OPTIONS, N_GAMES
+from markets.lines import get_market_prop_lines
 
 
 # ── Individual factor scoring functions ──────────────────────────────────────
@@ -212,7 +205,6 @@ class NBASport(SportModule):
     label = "NBA"
     icon = "🏀"
 
-    prizepicks_league_id = PRIZEPICKS_LEAGUE_ID
     prop_types = PROP_TYPES
     prop_type_labels = PROP_TYPE_LABELS
     position_options = POSITION_OPTIONS
@@ -278,7 +270,6 @@ class NBASport(SportModule):
             missing_teammates = {}
 
         games            = nba.get_todays_games()
-        team_lookup      = nba.build_team_lookup()
         played_yesterday = nba.get_yesterdays_teams()
 
         playing_today = set()
@@ -294,14 +285,21 @@ class NBASport(SportModule):
             opponent_map[g["away_team"]] = g["home_team"]
 
         if lines is None:
-            lines = get_prizepicks_lines(PRIZEPICKS_LEAGUE_ID, PRIZEPICKS_PROP_MAP, PROP_TYPES)
+            lines = get_market_prop_lines("nba", PROP_TYPES)
 
-        grouped = defaultdict(list)
-        meta = {}
+        # Kalshi/Polymarket prop rows don't hand us a team the way PrizePicks
+        # did, so resolve each player's current team once and cache it —
+        # several props usually share the same player.
+        team_cache = {}
 
+        slate = []
         for line in lines:
-            team_raw  = line.get("team", "").strip()
-            team_abbr = team_lookup.get(team_raw.lower())
+            player_name = line["player_name"]
+            if player_name not in team_cache:
+                player_id = nba.get_player_id(player_name)
+                team_cache[player_name] = nba.get_player_team(player_id) if player_id else None
+            team_abbr = team_cache[player_name]
+
             if not team_abbr or team_abbr not in playing_today:
                 continue
 
@@ -309,26 +307,16 @@ class NBASport(SportModule):
             if not opponent:
                 continue
 
-            key = (line["player_name"], line["prop_type"])
-            grouped[key].append(line["line"])
-            if key not in meta:
-                meta[key] = {
-                    "player_name": line["player_name"],
-                    "team":        team_abbr,
-                    "opponent":    opponent,
-                    "prop_type":   line["prop_type"],
-                    "is_home":     team_abbr in home_teams,
-                    "is_b2b":      team_abbr in played_yesterday,
-                    "position":    line.get("position", "SF"),
-                }
-
-        slate = []
-        for key, line_values in grouped.items():
-            line_values.sort()
-            median_line = line_values[len(line_values) // 2]
-            entry = dict(meta[key])
-            entry["line"] = median_line
-            slate.append(entry)
+            slate.append({
+                "player_name": player_name,
+                "team":        team_abbr,
+                "opponent":    opponent,
+                "prop_type":   line["prop_type"],
+                "line":        line["line"],
+                "is_home":     team_abbr in home_teams,
+                "is_b2b":      team_abbr in played_yesterday,
+                "position":    "SF",
+            })
 
         return sorted(slate, key=lambda x: x["player_name"])
 
