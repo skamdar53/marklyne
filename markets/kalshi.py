@@ -197,17 +197,21 @@ def spread(market):
 # ── Discovery ─────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=3600)
-def get_sports_series(category="sports"):
+def get_sports_series(category="Sports"):
     """
-    All Kalshi series in a category (default "sports"), as a list of dicts:
-        {ticker, title, category, frequency}
+    All Kalshi series in a category (default "Sports" — must match Kalshi's
+    exact category spelling, e.g. "Science and Technology"), as a list of
+    dicts: {ticker, title, category, frequency}
 
-    Kalshi's category values are capitalized ("Sports"), so we match
-    case-insensitively. ~3,300 sports series exist, covering ~17 sports —
-    game outcomes, player props, futures, awards, draft markets, etc.
+    Kalshi's category values are title-cased multi-word strings ("Science
+    and Technology") — plain .capitalize() mangles those (lowercases every
+    word but the first), which sends the server a category that matches
+    nothing and can come back with "series": null rather than []. Send the
+    category through unmodified and let the client-side filter (case
+    insensitive) be the real safety net either way.
     """
-    data = _get("/series", {"category": category.capitalize()})
-    series = data.get("series", []) if isinstance(data, dict) else []
+    data = _get("/series", {"category": category})
+    series = (data.get("series") or []) if isinstance(data, dict) else []
 
     want = category.lower()
     return [
@@ -416,3 +420,73 @@ def get_orderbook(ticker):
         return {}
     data = _get(f"/markets/{ticker}/orderbook")
     return data.get("orderbook", {}) if isinstance(data, dict) else {}
+
+
+# ── Everything, not just sports ─────────────────────────────────────────────
+#
+# A blind, unfiltered pull of /markets?status=open turns out to be almost
+# entirely "MVE" (multi-value-event) contracts — auto-generated parlay-style
+# combo products that get created constantly and crowd out everything else
+# once you page more than a couple hundred deep (confirmed live: 3,000
+# markets fetched, 0 were a normal single-outcome market). Their tickers
+# also don't parse as clean Yes/No bets ("yes Boston,yes Chicago WS,...").
+# So instead of paging /markets directly, this samples series from named
+# non-sports categories and pulls markets from each — same structured
+# approach as get_sports_series(), just for the categories people actually
+# want in a "surprise me" feed.
+
+# A representative slice of Kalshi's non-sports categories (confirmed live
+# via /series: Politics has 2,173 series, Entertainment 2,500, Economics
+# 622, etc. — orders of magnitude too many to enumerate fully, so this only
+# samples the first SERIES_PER_CATEGORY of each).
+GENERAL_CATEGORIES = ["Politics", "Economics", "Financials", "Entertainment",
+                       "Crypto", "Science and Technology", "World", "Elections"]
+SERIES_PER_CATEGORY = 15
+MARKETS_PER_SERIES = 10
+
+
+@st.cache_data(ttl=300)
+def get_all_markets(categories=None):
+    """
+    Broad, normalized sample of currently open Kalshi markets across several
+    non-sports categories (politics, economics, culture, and more) — for the
+    "all markets" scope of the Ambiguous Markets tab. Not exhaustive (there
+    are tens of thousands of series across these categories); a real sample
+    of legitimate single-outcome markets, not the exotic combo products a
+    blind /markets pull surfaces.
+
+    Returns [{label, implied_prob, volume, ticker, category}, ...].
+    """
+    cats = categories or GENERAL_CATEGORIES
+    rows = []
+
+    for category in cats:
+        try:
+            series_list = get_sports_series(category)[:SERIES_PER_CATEGORY]
+        except Exception as e:
+            print(f"Kalshi category fetch error ({category}): {e}")
+            continue
+
+        for s in series_list:
+            ticker = s.get("ticker")
+            if not ticker:
+                continue
+            try:
+                markets = get_series_markets(ticker, max_markets=MARKETS_PER_SERIES)
+            except Exception as e:
+                print(f"Kalshi series markets error ({ticker}): {e}")
+                continue
+
+            for m in markets:
+                prob = implied_prob(m)
+                if prob is None:
+                    continue
+                rows.append({
+                    "label":        m.get("title") or m.get("yes_sub_title") or m.get("ticker", ""),
+                    "implied_prob": prob,
+                    "volume":       _f(m.get("volume_fp")),
+                    "ticker":       m.get("ticker", ""),
+                    "category":     category,
+                })
+
+    return rows

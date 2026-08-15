@@ -515,10 +515,9 @@ HIGH_VOLUME_FLOOR = 5000.0
 
 
 @st.cache_data(ttl=300)
-def get_ambiguous_markets(sport_key):
+def get_ambiguous_markets(sport_key, scope="sport"):
     """
-    Two cuts of "interesting" markets for the Ambiguous Markets UI tab,
-    across game-outcome and player-prop markets on both platforms:
+    Two cuts of "interesting" markets for the Ambiguous Markets UI tab:
 
       toss_ups: priced within TOSSUP_BAND of 50/50 (genuine outcome
                 uncertainty) yet still cleared HIGH_VOLUME_FLOOR in trading
@@ -527,6 +526,19 @@ def get_ambiguous_markets(sport_key):
                 version, filtered to pairs where BOTH platforms cleared
                 HIGH_VOLUME_FLOOR — two well-capitalized markets actively
                 pricing the same outcome differently, sorted by |gap|.
+
+    scope: "sport" (default) — game-outcome and player-prop markets for
+           `sport_key` only, same as before.
+           "all" — toss_ups broadens to Kalshi/Polymarket markets across
+           EVERY category (politics, economics, entertainment, crypto,
+           etc. — see kalshi.GENERAL_CATEGORIES / polymarket.get_all_markets),
+           not just the four sports this app scores. disagreements stays
+           sport-scoped even in "all" mode: reliably matching the SAME
+           market across two platforms needs a structured join key (team
+           codes + game date, or player + stat + threshold) that general
+           markets don't have — fuzzy title matching alone is unreliable
+           enough it isn't worth shipping, so cross-platform disagreement
+           detection stays limited to sports.
 
     Returns {"toss_ups": [...], "disagreements": [...]}. Informational only.
     """
@@ -544,6 +556,16 @@ def get_ambiguous_markets(sport_key):
         except Exception as e:
             print(f"ambiguous markets fetch error ({label}, {sport}): {e}")
 
+    if scope == "all":
+        for label, fetch in (
+            ("kalshi",     lambda: [dict(r, market_kind="general") for r in kalshi.get_all_markets()]),
+            ("polymarket", lambda: [dict(r, market_kind="general") for r in polymarket.get_all_markets()]),
+        ):
+            try:
+                sources.extend(dict(r, source=label) for r in fetch())
+            except Exception as e:
+                print(f"ambiguous markets fetch error ({label}, general): {e}")
+
     toss_ups = []
     for r in sources:
         prob = r.get("implied_prob")
@@ -551,16 +573,20 @@ def get_ambiguous_markets(sport_key):
         if prob is None or volume < HIGH_VOLUME_FLOOR or abs(float(prob) - 0.5) > TOSSUP_BAND:
             continue
 
-        if r["market_kind"] == "prop":
+        kind = r["market_kind"]
+        if kind == "prop":
             label = f"{r.get('player_name', '?')} {r.get('prop_type', '')} over {r.get('threshold', '')}".strip()
             game = r.get("title") or r.get("question") or ""
+        elif kind == "general":
+            label = r.get("label", "?")
+            game = r.get("category", "")
         else:
             label = f"{r.get('team', '?')} to win"
             game = r.get("game", "")
 
         toss_ups.append({
             "source":       r["source"],
-            "market_kind":  r["market_kind"],
+            "market_kind":  kind,
             "label":        label,
             "game":         game,
             "implied_prob": round(float(prob), 4),

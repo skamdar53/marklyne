@@ -267,15 +267,30 @@ def _display_ambiguous_markets(sport_key):
     """Renders the toss-up / high-conviction-disagreement tab."""
     from markets.discrepancy import get_ambiguous_markets, HIGH_VOLUME_FLOOR, TOSSUP_BAND
 
+    scope_choice = st.radio(
+        "Scope",
+        [f"This sport ({SPORTS[sport_key].label})", "Everything — all Kalshi/Polymarket categories"],
+        horizontal=True,
+    )
+    scope = "all" if scope_choice.startswith("Everything") else "sport"
+
     st.markdown(
-        f"Two cuts of the most **interesting** live markets, across game outcomes and player props "
-        f"on both platforms (volume floor: **{HIGH_VOLUME_FLOOR:,.0f}** contracts, so this is real "
+        f"Two cuts of the most **interesting** live markets "
+        f"(volume floor: **{HIGH_VOLUME_FLOOR:,.0f}** contracts, so this is real "
         f"conviction, not noise on a thin book):"
     )
+    if scope == "all":
+        st.caption(
+            "Toss-ups below span politics, economics, entertainment, crypto, and more — not just "
+            "sports. High-conviction disagreements still require matching the same market across "
+            "both platforms, which only works reliably for sports right now (see Prediction Markets "
+            f"tab), so that section stays scoped to {SPORTS[sport_key].label}."
+        )
 
-    with st.spinner("Scanning live Kalshi and Polymarket markets..."):
+    with st.spinner("Scanning live Kalshi and Polymarket markets" +
+                     (" across every category — this can take a bit longer..." if scope == "all" else "...")):
         try:
-            result = get_ambiguous_markets(sport_key)
+            result = get_ambiguous_markets(sport_key, scope=scope)
         except Exception as e:
             st.error(f"Could not pull prediction market data: {e}")
             return
@@ -290,12 +305,12 @@ def _display_ambiguous_markets(sport_key):
         df["implied_prob"] = (df["implied_prob"] * 100).round(1)
         df = df.rename(columns={
             "source": "Platform", "market_kind": "Type", "label": "Market",
-            "game": "Game", "implied_prob": "Implied %", "volume": "Volume",
+            "game": "Game / Category", "implied_prob": "Implied %", "volume": "Volume",
         })
         st.dataframe(df, use_container_width=True, hide_index=True)
 
     st.markdown("---")
-    st.subheader("⚡ High-conviction disagreements")
+    st.subheader(f"⚡ High-conviction disagreements — {SPORTS[sport_key].label}")
     st.caption("Both platforms are heavily traded on the same outcome, and still don't agree.")
     disagreements = result.get("disagreements", [])
     if not disagreements:

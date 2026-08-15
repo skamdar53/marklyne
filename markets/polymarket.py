@@ -411,3 +411,62 @@ def get_price_history(clob_token_id, interval="1d", fidelity=60):
     if not isinstance(data, dict):
         return []
     return data.get("history", []) or []
+
+
+# ── Everything, not just sports ─────────────────────────────────────────────
+
+@st.cache_data(ttl=300)
+def get_open_events(limit=1500):
+    """Active Gamma events across EVERY category (no tag_id filter) — politics,
+    economics, culture, science, sports, all of it."""
+    page = 100
+    out = []
+    offset = 0
+    while offset < limit:
+        data = _get(GAMMA_API, "/events", {
+            "active": "true",
+            "closed": "false",
+            "limit": page,
+            "offset": offset,
+        })
+        if not isinstance(data, list) or not data:
+            break
+        out.extend(data)
+        if len(data) < page:
+            break
+        offset += page
+    return out[:limit]
+
+
+@st.cache_data(ttl=300)
+def get_all_markets(limit=1500):
+    """
+    Broad, normalized sample of currently open Polymarket binary (Yes/No)
+    markets across EVERY category — not just the four sports we score. For
+    the "all markets" scope of the Ambiguous Markets tab. Multi-outcome
+    events (more than 2 outcomes) are skipped: "implied probability of Yes"
+    isn't well-defined for them.
+
+    Returns [{label, implied_prob, volume, slug}, ...].
+    """
+    rows = []
+    for event in get_open_events(limit):
+        for m in (event.get("markets") or []):
+            outcomes = _jlist(m.get("outcomes"))
+            prices = _jlist(m.get("outcomePrices"))
+            if len(outcomes) != 2 or len(prices) != 2:
+                continue
+
+            yes_idx = 0
+            for i, o in enumerate(outcomes):
+                if (o or "").strip().lower() == "yes":
+                    yes_idx = i
+                    break
+
+            rows.append({
+                "label":        m.get("question") or event.get("title", ""),
+                "implied_prob": _f(prices[yes_idx]),
+                "volume":       _f(m.get("volume")),
+                "slug":         event.get("slug", ""),
+            })
+    return rows
