@@ -22,8 +22,52 @@ st.set_page_config(
 )
 
 
+# ── Global styling ────────────────────────────────────────────────────────────
+def _inject_global_css():
+    """
+    One-time page polish layered on top of .streamlit/config.toml's theme
+    (which handles the base dark palette + green primary so buttons, radios,
+    sliders etc. all match without fighting Streamlit's generated class
+    names). This block only styles what the theme system doesn't reach:
+    card-style containers, spacing, dividers, and the full-bleed ticker.
+    """
+    st.markdown(
+        """
+        <style>
+        /* Tighten the default top padding now that the ticker sits flush at the top */
+        .block-container { padding-top: 1rem; max-width: 1400px; }
+
+        h1, h2, h3 { letter-spacing: -0.01em; font-weight: 700; }
+        h1 { font-size: 1.9rem; }
+
+        hr { border-color: #22262f; margin: 1.5rem 0; }
+
+        [data-testid="stMetric"] {
+            background: #12151d; border: 1px solid #23262f; border-radius: 10px;
+            padding: 0.8rem 1rem 0.6rem;
+        }
+        [data-testid="stExpander"] {
+            border: 1px solid #23262f !important; border-radius: 10px !important;
+            background: #12151d;
+        }
+        [data-testid="stDataFrame"] { border: 1px solid #23262f; border-radius: 10px; overflow: hidden; }
+
+        [data-testid="stSidebar"] { border-right: 1px solid #23262f; }
+        [data-testid="stSidebar"] hr { margin: 1rem 0; }
+
+        /* Full-bleed helper: escapes the centered, padded block-container so
+           an element spans the entire browser viewport regardless of the
+           page's max-width/side padding. */
+        .full-bleed { position: relative; left: 50%; right: 50%;
+                       margin-left: -50vw; margin-right: -50vw; width: 100vw; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 # ── Ticker bar ──────────────────────────────────────────────────────────────
-def _ticker_track_html(items, label, accent):
+def _ticker_track_html(items, label, accent, text_color):
     """One scrolling strip. Items are duplicated once so the CSS loop has no
     visible seam; probability is colored green/red of the 50% line so the
     strip reads at a glance the way a real stock ticker does."""
@@ -43,7 +87,7 @@ def _ticker_track_html(items, label, accent):
 
     return f"""
     <div class="ticker-row">
-      <div class="ticker-label" style="background:{accent}">{label}</div>
+      <div class="ticker-label" style="background:{accent};color:{text_color}">{label}</div>
       <div class="ticker-track"><div class="ticker-scroll">{spans}</div></div>
     </div>
     """
@@ -51,6 +95,8 @@ def _ticker_track_html(items, label, accent):
 
 def _render_ticker(sport_keys):
     from markets.discrepancy import get_ticker_items
+
+    _inject_global_css()
 
     try:
         kalshi_items = get_ticker_items("kalshi", sport_keys)
@@ -64,12 +110,14 @@ def _render_ticker(sport_keys):
     st.markdown(
         """
         <style>
+        .ticker-wrap { margin-bottom: 1.1rem; padding: 8px 2.5vw 0; background: #05070a;
+                       border-bottom: 1px solid #1c2028; }
         .ticker-row { display: flex; align-items: stretch; border-radius: 6px;
-                      overflow: hidden; margin-bottom: 6px; font-family: 'SF Mono', Consolas, monospace; }
-        .ticker-label { flex: 0 0 auto; padding: 6px 14px; color: #0b0b0b; font-weight: 700;
-                         font-size: 0.8rem; letter-spacing: 0.08em; display: flex; align-items: center; }
+                      overflow: hidden; margin-bottom: 8px; font-family: 'SF Mono', Consolas, monospace; }
+        .ticker-label { flex: 0 0 auto; padding: 7px 18px; font-weight: 800;
+                         font-size: 0.8rem; letter-spacing: 0.1em; display: flex; align-items: center; }
         .ticker-track { flex: 1 1 auto; background: #111318; overflow: hidden; white-space: nowrap; }
-        .ticker-scroll { display: inline-block; padding: 6px 0; animation: ticker-scroll 55s linear infinite; }
+        .ticker-scroll { display: inline-block; padding: 7px 0; animation: ticker-scroll 130s linear infinite; }
         .ticker-row:hover .ticker-scroll { animation-play-state: paused; }
         .tick-item { color: #e8e8e8; font-size: 0.82rem; padding: 0 10px; }
         .tick-sep { color: #4a4a4a; }
@@ -78,8 +126,14 @@ def _render_ticker(sport_keys):
         """,
         unsafe_allow_html=True,
     )
-    st.markdown(_ticker_track_html(kalshi_items, "KALSHI", "#ffd23f"), unsafe_allow_html=True)
-    st.markdown(_ticker_track_html(poly_items, "POLYMARKET", "#5ac8fa"), unsafe_allow_html=True)
+
+    # Kalshi = green (requested), Polymarket = violet — high contrast against
+    # green without fighting the app's own green primary accent color.
+    rows_html = (
+        _ticker_track_html(kalshi_items, "KALSHI", "#1fbf6c", "#03130a")
+        + _ticker_track_html(poly_items, "POLYMARKET", "#8a63f2", "#0c0716")
+    )
+    st.markdown(f'<div class="full-bleed ticker-wrap">{rows_html}</div>', unsafe_allow_html=True)
 
 
 # ── Shared Display Functions ──────────────────────────────────────────────────
